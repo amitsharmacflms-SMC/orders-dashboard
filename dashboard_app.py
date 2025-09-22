@@ -113,13 +113,13 @@ if "Date" in df_secondary.columns and "Order Date" not in df_secondary.columns:
 # Show raw samples for debugging
 with st.expander("🔎 Raw Order Date sample (Summary.xlsx)"):
     if "Order Date" in df_summary.columns:
-        st.write(df_summary["Order Date"].head(200))
+        st.write(df_summary["Order Date"])
     else:
         st.write("No Order Date column in Summary.xlsx")
 
 with st.expander("🔎 Raw Order Date sample (Secondary.xlsx)"):
     if "Order Date" in df_secondary.columns:
-        st.write(df_secondary["Order Date"].head(200))
+        st.write(df_secondary["Order Date"].)
     else:
         st.write("No Order Date column in Secondary.xlsx")
 
