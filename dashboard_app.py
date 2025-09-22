@@ -26,7 +26,7 @@ def load_data():
 df_summary, df_secondary = load_data()
 
 # -------------------------
-# Robust Order Date parsing + debug + left-merge (keep Summary rows)
+# Robust Date parsing + debug + left-merge (keep Summary rows)
 # -------------------------
 def robust_parse_date_col(series):
     """Try multiple formats, Excel serials, then fallback to generic parser.
@@ -51,40 +51,40 @@ def robust_parse_date_col(series):
     return parsed.dt.date
 
 # Show raw samples BEFORE parsing
-with st.expander("🔎 Raw Order Date sample (Summary.xlsx)"):
-    if "Order Date" in df_summary.columns:
-        st.write(df_summary["Order Date"].head(200))
+with st.expander("🔎 Raw Date sample (Summary.xlsx)"):
+    if "Date" in df_summary.columns:
+        st.write(df_summary["Date"].head(200))
     else:
-        st.write("No Order Date column in Summary.xlsx")
+        st.write("No Date column in Summary.xlsx")
 
-with st.expander("🔎 Raw Order Date sample (Secondary.xlsx)"):
-    if "Order Date" in df_secondary.columns:
-        st.write(df_secondary["Order Date"].head(200))
+with st.expander("🔎 Raw Date sample (Secondary.xlsx)"):
+    if "Date" in df_secondary.columns:
+        st.write(df_secondary["Date"].head(200))
     else:
-        st.write("No Order Date column in Secondary.xlsx")
+        st.write("No Date column in Secondary.xlsx")
 
 # Apply robust parsing to both dataframes (in-place), keep raw for debug
 for dname, dframe in [("Summary", df_summary), ("Secondary", df_secondary)]:
-    if "Order Date" in dframe.columns:
-        parsed = robust_parse_date_col(dframe["Order Date"])
-        dframe["Order Date_Parsed"] = parsed
-        dframe["Order Date_Raw"] = dframe["Order Date"].astype(str)
-        dframe["Order Date"] = parsed
+    if "Date" in dframe.columns:
+        parsed = robust_parse_date_col(dframe["Date"])
+        dframe["Date_Parsed"] = parsed
+        dframe["Date_Raw"] = dframe["Date"].astype(str)
+        dframe["Date"] = parsed
 
 # Debug coverage BEFORE merge
 with st.expander("🔎 Date coverage BEFORE merge"):
-    if "Order Date" in df_summary.columns:
-        st.write("Summary parsed min/max:", df_summary["Order Date"].min(), df_summary["Order Date"].max())
-        st.write("Unique dates in Summary:", sorted(df_summary["Order Date"].dropna().unique()))
+    if "Date" in df_summary.columns:
+        st.write("Summary parsed min/max:", df_summary["Date"].min(), df_summary["Date"].max())
+        st.write("Unique dates in Summary:", sorted(df_summary["Date"].dropna().unique()))
         st.write("Count parsed vs missing (Summary):",
-                 {"parsed": int(df_summary["Order Date"].notna().sum()), "missing": int(df_summary["Order Date"].isna().sum())})
-    if "Order Date" in df_secondary.columns:
-        st.write("Secondary parsed min/max:", df_secondary["Order Date"].min(), df_secondary["Order Date"].max())
+                 {"parsed": int(df_summary["Date"].notna().sum()), "missing": int(df_summary["Date"].isna().sum())})
+    if "Date" in df_secondary.columns:
+        st.write("Secondary parsed min/max:", df_secondary["Date"].min(), df_secondary["Date"].max())
         st.write("Count parsed vs missing (Secondary):",
-                 {"parsed": int(df_secondary["Order Date"].notna().sum()), "missing": int(df_secondary["Order Date"].isna().sum())})
+                 {"parsed": int(df_secondary["Date"].notna().sum()), "missing": int(df_secondary["Date"].isna().sum())})
 
 # --- Merge on join keys, keep all Summary rows (left join) ---
-join_keys = ["User", "Order Date"]
+join_keys = ["User", "Date"]
 try:
     df = pd.merge(df_summary, df_secondary, on=join_keys, how="left", suffixes=("_Sum", "_Sec"))
 except Exception as e:
@@ -93,11 +93,11 @@ except Exception as e:
 
 # After merge debug
 with st.expander("🔎 Date coverage AFTER merge"):
-    if "Order Date" in df.columns:
-        st.write("Merged parsed min/max:", df["Order Date"].min(), df["Order Date"].max())
-        st.write("Unique dates in Merged:", sorted(df["Order Date"].dropna().unique()))
+    if "Date" in df.columns:
+        st.write("Merged parsed min/max:", df["Date"].min(), df["Date"].max())
+        st.write("Unique dates in Merged:", sorted(df["Date"].dropna().unique()))
         st.write("Count parsed vs missing (Merged):",
-                 {"parsed": int(df["Order Date"].notna().sum()), "missing": int(df["Order Date"].isna().sum())})
+                 {"parsed": int(df["Date"].notna().sum()), "missing": int(df["Date"].isna().sum())})
 
 # --- Unify Sum/Sec columns into clean ones and drop originals ---
 def unify_columns(df_local, base):
@@ -142,7 +142,7 @@ if {"First Call", "Last Call"}.issubset(df.columns):
 st.markdown("### Filters")
 
 required_filters = [
-    "Order Date","Region","Territory","L4Position User","L3Position User",
+    "Date","Region","Territory","L4Position User","L3Position User",
     "L2Position User","Reporting Manager","Primary Category","User"
 ]
 
@@ -157,15 +157,15 @@ if "orderdate" in available_cols:
     max_date = df[date_col].dropna().max()
     if pd.isna(min_date) or pd.isna(max_date):
         # fallback to summary if merged lacks proper parsed dates
-        if "Order Date" in df_summary.columns:
-            min_date = df_summary["Order Date"].dropna().min()
-            max_date = df_summary["Order Date"].dropna().max()
+        if "Date" in df_summary.columns:
+            min_date = df_summary["Date"].dropna().min()
+            max_date = df_summary["Date"].dropna().max()
     # Protect against None
     if pd.notna(min_date) and pd.notna(max_date):
-        start, end = st.date_input("Order Date Range", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+        start, end = st.date_input("Date Range", value=(min_date, max_date), min_value=min_date, max_value=max_date)
         filter_selections[date_col] = (start, end)
     else:
-        st.info("Order Date range not available (parsing failed). See debug panels above.")
+        st.info("Date range not available (parsing failed). See debug panels above.")
 
 # Other filters
 for f in required_filters:
@@ -203,7 +203,7 @@ with st.expander("🔎 Row counts after filters"):
 
 # --- Final locked column order ---
 final_columns = [
-    "Order Date","Region","Territory","L4Position User","L3Position User","L2Position User",
+    "Date","Region","Territory","L4Position User","L3Position User","L2Position User",
     "Reporting Manager","Primary Category","Distributor","Beat","Outlet Name","Address","Market","Product","User",
     "Tc","Pc","Ovc","First Call","Last Call","Total Retail Time(Hh:Mm)",
     "Ghee","Dw Primary Packs","Dw Consu","Dw Bulk","36 No","Smp","Gjm","Cream","Uht Milk","Flavored Milk"
