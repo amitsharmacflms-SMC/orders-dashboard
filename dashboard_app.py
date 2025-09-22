@@ -119,7 +119,7 @@ with st.expander("🔎 Raw Order Date sample (Summary.xlsx)"):
 
 with st.expander("🔎 Raw Order Date sample (Secondary.xlsx)"):
     if "Order Date" in df_secondary.columns:
-        st.write(df_secondary["Order Date"].)
+        st.write(df_secondary["Order Date"])
     else:
         st.write("No Order Date column in Secondary.xlsx")
 
