@@ -2,92 +2,116 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 
-st.set_page_config(page_title="Stylish Orders Dashboard", layout="wide")
+st.set_page_config(page_title="Orders Dashboard", layout="wide")
 
-# --- Page style ---
-st.markdown("""
-    <style>
-    .stApp { font-family: "Inter", sans-serif; background: #f7fafc; }
-    .header { background: linear-gradient(90deg,#4f46e5,#06b6d4); padding: 18px; border-radius:12px; color:white; }
-    .card { background: white; padding: 16px; border-radius: 10px; box-shadow: 0 6px 18px rgba(15,23,42,0.06); }
-    </style>
-""", unsafe_allow_html=True)
+# --- Global table width mode ---
+TABLE_WIDTH_MODE = "stretch"   # change to "content" if you don’t want full width
 
-st.markdown('<div class="header"><h2>Stylish Orders Dashboard</h2><p>Interactive filters and exports</p></div>', unsafe_allow_html=True)
-st.write("")
+# --- Normalize column names ---
+def normalize_columns(df):
+    df = df.copy()
+    df.columns = (
+        df.columns.str.strip()
+        .str.replace(r"[_\s]+", " ", regex=True)  # unify underscores/spaces
+        .str.title()  # Title case
+    )
+    return df
 
-# --- Auto-load Excel files from repo ---
+# --- Load Excel files ---
 @st.cache_data
 def load_data():
     df_summary = pd.read_excel("Summary.xlsx", engine="openpyxl")
     df_secondary = pd.read_excel("Secondary.xlsx", engine="openpyxl")
-    df_summary.columns = [str(c).strip() for c in df_summary.columns]
-    df_secondary.columns = [str(c).strip() for c in df_secondary.columns]
-    return df_summary, df_secondary
+    return normalize_columns(df_summary), normalize_columns(df_secondary)
 
 df_summary, df_secondary = load_data()
 
 # --- Merge on exact join keys ---
 join_keys = ["User", "Order Date"]
 
-# Ensure "Order Date" is datetime in both
 for df in [df_summary, df_secondary]:
     if "Order Date" in df.columns:
         df["Order Date"] = pd.to_datetime(df["Order Date"], errors="coerce")
 
 try:
     df = pd.merge(
-        df_summary,
-        df_secondary,
-        on=join_keys,
-        how="outer",
-        suffixes=("_sum", "_sec")
+        df_summary, df_secondary,
+        on=join_keys, how="outer",
+        suffixes=("_Sum", "_Sec")
     )
 except Exception as e:
     st.error(f"Merge failed on {join_keys}: {e}")
-    df = pd.concat([df_summary.reset_index(drop=True), df_secondary.reset_index(drop=True)], axis=1)
+    st.stop()
+
+# --- Debug: Show merged column names ---
+with st.expander("🔎 Debug: Show all merged column names"):
+    st.write(list(df.columns))
 
 # --- Ensure extra columns exist ---
 extra_cols = [
-    "TC","PC","OVC","First Call","Last Call","Total Retail Time(HH:MM)",
-    "Ghee","Dw Primary Packs","Dw Consu","DW Bulk","36 No","SMP","GJM","Cream","UHT Milk","Flavored Milk"
+    "Tc","Pc","Ovc","First Call","Last Call","Total Retail Time(Hh:Mm)",
+    "Ghee","Dw Primary Packs","Dw Consu","Dw Bulk","36 No","Smp","Gjm","Cream","Uht Milk","Flavored Milk"
 ]
 for c in extra_cols:
     if c not in df.columns:
         df[c] = 0 if "Call" not in c and "Time" not in c else pd.NaT
 
 # Compute retail time if possible
-if "First Call" in df.columns and "Last Call" in df.columns:
-    try:
-        diff = pd.to_datetime(df["Last Call"], errors="coerce") - pd.to_datetime(df["First Call"], errors="coerce")
-        df["Total Retail Time(HH:MM)"] = diff.dt.total_seconds().div(60).fillna(0).astype(int).apply(lambda x: f"{x//60:02d}:{x%60:02d}")
-    except:
-        pass
+if {"First Call", "Last Call"}.issubset(df.columns):
+    first = pd.to_datetime(df["First Call"], errors="coerce")
+    last = pd.to_datetime(df["Last Call"], errors="coerce")
+    mask = first.notna() & last.notna()
+    df.loc[mask, "Total Retail Time(Hh:Mm)"] = (
+        (last - first).dt.total_seconds().div(60).astype(int)
+        .apply(lambda x: f"{x//60:02d}:{x%60:02d}")
+    )
 
-# --- Filters ---
+# --- Filters (robust matching) ---
 st.markdown("### Filters")
-filter_cols = ["Order Date","Region","Territory","L4Position User","L3Position User","L2Position User","Reporting Manager","PrimaryCategory","User"]
+
+required_filters = [
+    "Order Date","Region","Territory","L4Position User","L3Position User",
+    "L2Position User","Reporting Manager","Primary Category","User"
+]
+
+# Reset button
+if st.button("🔄 Reset Filters"):
+    for f in required_filters:
+        st.session_state[f"f_{f}"] = []
 
 filter_selections = {}
-for c in filter_cols:
-    if c in df.columns:
-        sel = st.multiselect(c, sorted(df[c].dropna().unique()), key=f"f_{c}")
-        filter_selections[c] = sel
+# Build normalized lookup: "primarycategory" -> "Primarycategory"
+available_cols = {c.lower().replace(" ", "").replace("_",""): c for c in df.columns}
 
+for f in required_filters:
+    f_key = f.lower().replace(" ", "").replace("_","")
+    if f_key in available_cols:
+        col = available_cols[f_key]
+        vals = df[col].dropna().unique().tolist()
+        if vals:
+            sel = st.multiselect(f, sorted(vals), key=f"f_{f}")
+            filter_selections[col] = sel
+    else:
+        st.info(f"⚠️ Column '{f}' not found in merged data.")
+
+# --- Apply filters ---
 df_filtered = df.copy()
 for col, sel in filter_selections.items():
-    if sel:
+    if sel:  # Only filter if something is selected
         df_filtered = df_filtered[df_filtered[col].isin(sel)]
+
+# Debug info
+with st.expander("🔎 Active Filters & Row Count"):
+    st.write("Active filter selections:", filter_selections)
+    st.write("Filtered rows:", len(df_filtered))
 
 # --- Final locked column order ---
 final_columns = [
     "Order Date","Region","Territory","L4Position User","L3Position User","L2Position User",
-    "Reporting Manager","PrimaryCategory","Distributor","Beat","Outlet Name","Address","Market","Product","User",
-    "TC","PC","OVC","First Call","Last Call","Total Retail Time(HH:MM)",
-    "Ghee","Dw Primary Packs","Dw Consu","DW Bulk","36 No","SMP","GJM","Cream","UHT Milk","Flavored Milk"
+    "Reporting Manager","Primary Category","Distributor","Beat","Outlet Name","Address","Market","Product","User",
+    "Tc","Pc","Ovc","First Call","Last Call","Total Retail Time(Hh:Mm)",
+    "Ghee","Dw Primary Packs","Dw Consu","Dw Bulk","36 No","Smp","Gjm","Cream","Uht Milk","Flavored Milk"
 ]
-
-# Keep only those that exist in df
 final_columns = [c for c in final_columns if c in df_filtered.columns]
 final_df = df_filtered[final_columns].reset_index(drop=True)
 
@@ -101,7 +125,7 @@ k4.metric("Territories", final_df["Territory"].nunique() if "Territory" in final
 
 # --- Table ---
 st.markdown("### Results Table (Top 200 Rows)")
-st.dataframe(final_df.head(200), use_container_width=True)
+st.dataframe(final_df.head(200), width=TABLE_WIDTH_MODE)
 
 # --- Export ---
 def to_csv_bytes(df_obj):
