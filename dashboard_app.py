@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 from io import BytesIO
 
 st.set_page_config(page_title="Stylish Orders Dashboard", layout="wide")
@@ -48,7 +47,7 @@ except Exception as e:
     st.error(f"Merge failed on {join_keys}: {e}")
     df = pd.concat([df_summary.reset_index(drop=True), df_secondary.reset_index(drop=True)], axis=1)
 
-# --- Add extra columns if missing ---
+# --- Ensure extra columns exist ---
 extra_cols = [
     "TC","PC","OVC","First Call","Last Call","Total Retail Time(HH:MM)",
     "Ghee","Dw Primary Packs","Dw Consu","DW Bulk","36 No","SMP","GJM","Cream","UHT Milk","Flavored Milk"
@@ -80,32 +79,17 @@ for col, sel in filter_selections.items():
     if sel:
         df_filtered = df_filtered[df_filtered[col].isin(sel)]
 
-# --- Column visibility ---
-st.markdown("### Column Visibility")
-main_cols = [
+# --- Final locked column order ---
+final_columns = [
     "Order Date","Region","Territory","L4Position User","L3Position User","L2Position User",
-    "Reporting Manager","PrimaryCategory","Distributor","Beat","Outlet Name","Address","Market","Product","User"
+    "Reporting Manager","PrimaryCategory","Distributor","Beat","Outlet Name","Address","Market","Product","User",
+    "TC","PC","OVC","First Call","Last Call","Total Retail Time(HH:MM)",
+    "Ghee","Dw Primary Packs","Dw Consu","DW Bulk","36 No","SMP","GJM","Cream","UHT Milk","Flavored Milk"
 ]
-main_cols = [c for c in main_cols if c in df.columns]
 
-vis_cols = []
-colL, colR = st.columns(2)
-with colL:
-    st.markdown("**Main Columns**")
-    for c in main_cols:
-        if st.checkbox(c, True, key=f"vis_{c}"):
-            vis_cols.append(c)
-with colR:
-    st.markdown("**Extra Columns**")
-    for c in extra_cols:
-        if st.checkbox(c, c in ["TC","PC","OVC"], key=f"vis_extra_{c}"):
-            vis_cols.append(c)
-
-if not vis_cols:
-    st.warning("No columns selected. Please pick at least one.")
-    st.stop()
-
-final_df = df_filtered[vis_cols].reset_index(drop=True)
+# Keep only those that exist in df
+final_columns = [c for c in final_columns if c in df_filtered.columns]
+final_df = df_filtered[final_columns].reset_index(drop=True)
 
 # --- KPIs ---
 st.markdown("### KPIs")
