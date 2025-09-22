@@ -39,20 +39,17 @@ def robust_parse_date_col(series):
     mask = s_num.notna()
     if mask.any():
         try:
-            # convert numeric subset -> numpy array, convert, then align back via Series
             nums = s_num[mask].astype("float64").values
             converted = pd.to_datetime(nums, unit="d", origin="1899-12-30", errors="coerce")
             converted_series = pd.Series(converted, index=s_num[mask].index)
             parsed = parsed.fillna(converted_series)
         except Exception:
-            # fallback to elementwise conversion for the numeric subset
             converted_series = s_num[mask].apply(lambda x: pd.to_datetime(float(x), unit="d", origin="1899-12-30", errors="coerce"))
             parsed = parsed.fillna(converted_series)
 
     # 3) Final fallback to generic parser (dateutil)
     parsed = parsed.fillna(pd.to_datetime(s_str, errors="coerce"))
 
-    # Return date (not datetime) for consistent downstream filtering
     return parsed.dt.date
 
 def aggregate_secondary(df_secondary, join_keys):
@@ -100,7 +97,7 @@ def load_data():
 
 df_summary_raw, df_secondary_raw = load_data()
 
-# Normalize headers first
+# Normalize headers
 df_summary = normalize_columns(df_summary_raw)
 df_secondary = normalize_columns(df_secondary_raw)
 
@@ -113,13 +110,13 @@ if "Date" in df_secondary.columns and "Order Date" not in df_secondary.columns:
 # Show raw samples for debugging
 with st.expander("🔎 Raw Order Date sample (Summary.xlsx)"):
     if "Order Date" in df_summary.columns:
-        st.write(df_summary["Order Date"])
+        st.write(df_summary["Order Date"].head(200))
     else:
         st.write("No Order Date column in Summary.xlsx")
 
 with st.expander("🔎 Raw Order Date sample (Secondary.xlsx)"):
     if "Order Date" in df_secondary.columns:
-        st.write(df_secondary["Order Date"])
+        st.write(df_secondary["Order Date"].head(200))
     else:
         st.write("No Order Date column in Secondary.xlsx")
 
@@ -134,6 +131,12 @@ if "Order Date" in df_secondary.columns:
     df_secondary["Order Date_Raw"] = df_secondary["Order Date"].astype(str)
     df_secondary["Order Date"] = df_secondary["Order Date_Parsed"]
 
+# Normalize User fields (strip + uppercase) to avoid subtle mismatches
+if "User" in df_summary.columns:
+    df_summary["User"] = df_summary["User"].astype(str).str.strip().str.upper()
+if "User" in df_secondary.columns:
+    df_secondary["User"] = df_secondary["User"].astype(str).str.strip().str.upper()
+
 # Debug: date coverage before merge
 with st.expander("🔎 Date coverage BEFORE merge"):
     if "Order Date" in df_summary.columns:
@@ -147,9 +150,17 @@ with st.expander("🔎 Date coverage BEFORE merge"):
                  {"parsed": int(df_secondary["Order Date"].notna().sum()), "missing": int(df_secondary["Order Date"].isna().sum())})
 
 # ---------------------
+# Diagnostic (pre-aggregation) to help if Secondary has multiple rows
+# ---------------------
+with st.expander("🔎 Pre-aggregation Secondary sample"):
+    st.write("Secondary (raw) shape:", df_secondary.shape)
+    st.write("Secondary (raw) columns (first 80):", list(df_secondary.columns)[:80])
+    st.write("Secondary (raw) sample 20 rows:")
+    st.write(df_secondary.head(20))
+
+# ---------------------
 # Decide merge keys and aggregate secondary as needed
 # ---------------------
-# Preferred join: ["User","Order Date"] if secondary has Order Date, else fall back to ["User"]
 if "Order Date" in df_secondary.columns:
     join_keys = ["User", "Order Date"]
     st.info("Secondary.xlsx has an 'Order Date' column. Aggregating Secondary by (User, Order Date) and performing left-merge on these keys.")
@@ -161,7 +172,63 @@ else:
     if "User" in df_secondary.columns:
         dup_counts = df_secondary["User"].value_counts().rename_axis("User").reset_index(name="Secondary_rows_count")
         with st.expander("🔎 Secondary rows per User (sample)"):
-            st.write(dup_counts.head)
+            st.write(dup_counts.head(200))
+
+# Diagnostic: show aggregated secondary sample
+with st.expander("🔎 Secondary agg sample & counts"):
+    st.write("Secondary_agg shape:", df_secondary_agg.shape)
+    st.write("Columns (first 80):", list(df_secondary_agg.columns)[:80])
+    st.write(df_secondary_agg.head(20))
+
+# ====== DIAGNOSTIC BLOCK: BEFORE MERGE ======
+st.markdown("### 🔍 Secondary Merge Diagnostics (pre-merge)")
+
+s = df_summary.copy()
+t = df_secondary_agg.copy()
+
+# normalized fields for diagnostics
+s["__user__"] = s["User"].astype(str).str.strip().str.upper() if "User" in s.columns else None
+t["__user__"] = t["User"].astype(str).str.strip().str.upper() if "User" in t.columns else None
+
+s["__date__"] = pd.to_datetime(s["Order Date"], errors="coerce").dt.date if "Order Date" in s.columns else pd.NaT
+t["__date__"] = pd.to_datetime(t["Order Date"], errors="coerce").dt.date if "Order Date" in t.columns else pd.NaT
+
+st.write("Unique users in Summary (sample 20):", sorted(s["__user__"].dropna().unique())[:20])
+st.write("Unique users in Secondary agg (sample 20):", sorted(t["__user__"].dropna().unique())[:20])
+st.write("Counts -> summary:", len(s), " secondary_agg:", len(t))
+
+merge_keys_debug = join_keys.copy()
+st.write("Attempting debug merge on keys:", merge_keys_debug)
+if merge_keys_debug:
+    tmp = s.merge(t, on=merge_keys_debug, how="left", indicator=True)
+    st.write("Merge indicator counts:", tmp["_merge"].value_counts().to_dict())
+    st.write("Rows where nothing from Secondary matched (left_only) sample 20:")
+    st.write(tmp[tmp["_merge"]=="left_only"][["User","Order Date"]].head(20))
+
+    left_only_users = tmp[tmp["_merge"]=="left_only"]["__user__"].dropna().unique()[:5]
+    for u in left_only_users:
+        st.write(f"Secondary rows for USER (normalized) {u} (sample):")
+        st.write(t[t["__user__"]==u].head(10))
+
+    # per-user date mismatches (sample)
+    if "Order Date" in df_secondary.columns:
+        s_grp = s.groupby("__user__")["__date__"].agg(lambda x: set(x.dropna()))
+        t_grp = t.groupby("__user__")["__date__"].agg(lambda x: set(x.dropna()))
+        compare_users = list(s_grp.index)[:10]
+        diffs = {}
+        for u in compare_users:
+            sd = s_grp.get(u, set())
+            td = t_grp.get(u, set())
+            only_in_summary = sorted(list(sd - td))[:10]
+            only_in_secondary = sorted(list(td - sd))[:10]
+            if only_in_summary or only_in_secondary:
+                diffs[u] = {"only_in_summary": only_in_summary, "only_in_secondary": only_in_secondary}
+        st.write("Per-user date mismatches (sample):")
+        st.write(diffs)
+else:
+    st.warning("No merge keys available for debug (check 'User' presence).")
+
+# ====== END DIAGNOSTIC BLOCK ======
 
 # Perform left merge (keep all summary rows)
 try:
@@ -312,7 +379,7 @@ k3.metric("Outlets", final_df["Outlet Name"].nunique() if "Outlet Name" in final
 k4.metric("Territories", final_df["Territory"].nunique() if "Territory" in final_df.columns else 0)
 
 st.markdown("### Results Table (Top 200 Rows)")
-st.dataframe(final_df, width=TABLE_WIDTH_MODE)
+st.dataframe(final_df.head(200), width=TABLE_WIDTH_MODE)
 
 def to_csv_bytes(df_obj):
     return df_obj.to_csv(index=False).encode("utf-8")
