@@ -43,6 +43,22 @@ except Exception as e:
     st.error(f"Merge failed on {join_keys}: {e}")
     st.stop()
 
+# --- Unify Sum/Sec columns into clean ones ---
+def unify_columns(df, base):
+    sum_col, sec_col = f"{base}_Sum", f"{base}_Sec"
+    if sum_col in df.columns and sec_col in df.columns:
+        df[base] = df[sum_col].combine_first(df[sec_col])
+    elif sum_col in df.columns:
+        df[base] = df[sum_col]
+    elif sec_col in df.columns:
+        df[base] = df[sec_col]
+    return df
+
+# Columns we want unified for filters
+for col in ["Region", "Territory", "Reporting Manager", "Distributor",
+            "L4Position User", "L3Position User", "L2Position User"]:
+    df = unify_columns(df, col)
+
 # --- Debug: Show merged column names ---
 with st.expander("🔎 Debug: Show all merged column names"):
     st.write(list(df.columns))
