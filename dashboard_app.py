@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from io import BytesIO
-from datetime import datetime
 
 st.set_page_config(page_title="Stylish Orders Dashboard", layout="wide")
 
@@ -18,36 +17,25 @@ st.markdown("""
 st.markdown('<div class="header"><h2>Stylish Orders Dashboard</h2><p>Interactive filters and exports</p></div>', unsafe_allow_html=True)
 st.write("")
 
-# --- Upload section ---
-col1, col2 = st.columns(2)
-with col1:
-    st.markdown("#### Upload Summary Sheet (Excel)")
-    summary_file = st.file_uploader("Upload", type=["xlsx", "xls"], key="summary")
-with col2:
-    st.markdown("#### Upload Secondary Order Dump (Excel)")
-    secondary_file = st.file_uploader("Upload", type=["xlsx", "xls"], key="secondary")
-
+# --- Auto-load Excel files from repo ---
 @st.cache_data
-def read_excel_safe(f):
-    if f is None:
-        return pd.DataFrame()
-    return pd.read_excel(f, engine="openpyxl")
+def load_data():
+    df_summary = pd.read_excel("Summary.xlsx", engine="openpyxl")
+    df_secondary = pd.read_excel("Secondary.xlsx", engine="openpyxl")
+    df_summary.columns = [str(c).strip() for c in df_summary.columns]
+    df_secondary.columns = [str(c).strip() for c in df_secondary.columns]
+    return df_summary, df_secondary
 
-df_summary = read_excel_safe(summary_file)
-df_secondary = read_excel_safe(secondary_file)
+df_summary, df_secondary = load_data()
 
-if df_summary.empty and df_secondary.empty:
-    st.info("Please upload at least one of the two Excel files.")
-    st.stop()
-
-# Clean column names
-df_summary.columns = [str(c).strip() for c in df_summary.columns]
-df_secondary.columns = [str(c).strip() for c in df_secondary.columns]
-
-# --- Join on exact keys ---
+# --- Merge on exact keys ---
 st.markdown("### Merge Settings")
 all_cols = sorted(set(df_summary.columns) | set(df_secondary.columns))
-join_keys = st.multiselect("Select join keys", options=all_cols, default=[c for c in ["User","Order Date"] if c in all_cols])
+join_keys = st.multiselect(
+    "Select join keys", 
+    options=all_cols, 
+    default=[c for c in ["User","Order Date"] if c in all_cols]
+)
 
 if join_keys:
     try:
@@ -72,7 +60,7 @@ for c in extra_cols:
 if "First Call" in df.columns and "Last Call" in df.columns:
     try:
         diff = pd.to_datetime(df["Last Call"], errors="coerce") - pd.to_datetime(df["First Call"], errors="coerce")
-        df["Total Retail Time(HH:MM)"] = diff.dt.seconds//3600*100 + (diff.dt.seconds//60)%60
+        df["Total Retail Time(HH:MM)"] = diff.dt.total_seconds().div(60).fillna(0).astype(int).apply(lambda x: f"{x//60:02d}:{x%60:02d}")
     except:
         pass
 
