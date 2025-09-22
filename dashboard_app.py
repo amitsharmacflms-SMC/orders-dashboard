@@ -312,7 +312,7 @@ k3.metric("Outlets", final_df["Outlet Name"].nunique() if "Outlet Name" in final
 k4.metric("Territories", final_df["Territory"].nunique() if "Territory" in final_df.columns else 0)
 
 st.markdown("### Results Table (Top 200 Rows)")
-st.dataframe(final_df), width=TABLE_WIDTH_MODE)
+st.dataframe(final_df, width=TABLE_WIDTH_MODE)
 
 def to_csv_bytes(df_obj):
     return df_obj.to_csv(index=False).encode("utf-8")
