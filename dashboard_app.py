@@ -58,25 +58,18 @@ for c in extra_cols:
 
 # --- Compute retail time safely (HH:MM format, default 00:00 if missing) ---
 if {"First Call", "Last Call"}.issubset(df.columns):
-    # Explicit HH:MM parsing
     first = pd.to_datetime(df["First Call"], format="%H:%M", errors="coerce")
     last = pd.to_datetime(df["Last Call"], format="%H:%M", errors="coerce")
 
-    # Calculate difference in minutes
     diff_minutes = (last - first).dt.total_seconds() / 60
-
-    # Ensure numeric, replace bad with 0, clip negatives
     diff_minutes = pd.to_numeric(diff_minutes, errors="coerce").fillna(0).clip(lower=0)
-
-    # Convert to int minutes
     diff_minutes = diff_minutes.astype(int)
 
-    # Format as hh:mm string
     df["Total Retail Time(Hh:Mm)"] = diff_minutes.apply(
         lambda x: f"{x // 60:02d}:{x % 60:02d}"
     )
 
-# --- Filters (only the 9 requested) ---
+# --- Filters (robust matching) ---
 st.markdown("### Filters")
 
 required_filters = [
@@ -85,17 +78,29 @@ required_filters = [
 ]
 
 filter_selections = {}
+available_cols = {c.lower().replace(" ", "").replace("_",""): c for c in df.columns}
+
+matched_filters = {}
+missing_filters = []
+
 for f in required_filters:
-    col = [c for c in df.columns if c.lower() == f.lower()]
-    if col:
-        col = col[0]
+    f_key = f.lower().replace(" ", "").replace("_","")
+    if f_key in available_cols:
+        col = available_cols[f_key]
+        matched_filters[f] = col
         vals = df[col].dropna().unique().tolist()
         if vals:
             sel = st.multiselect(f, sorted(vals), key=f"f_{f}")
             filter_selections[col] = sel
     else:
-        st.info(f"⚠️ Column '{f}' not found in merged data.")
+        missing_filters.append(f)
 
+# --- Debug panel for filter matching ---
+with st.expander("🔎 Filter Matching Debug"):
+    st.write("✅ Matched filters:", matched_filters)
+    st.write("⚠️ Missing filters (not found in merged data):", missing_filters)
+
+# --- Apply filters ---
 df_filtered = df.copy()
 for col, sel in filter_selections.items():
     if sel:
