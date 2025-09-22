@@ -26,12 +26,17 @@ def load_data():
 
 df_summary, df_secondary = load_data()
 
-# --- Merge on exact join keys ---
-join_keys = ["User", "Order Date"]
-
+# --- Convert Order Date in both ---
 for df in [df_summary, df_secondary]:
     if "Order Date" in df.columns:
-        df["Order Date"] = pd.to_datetime(df["Order Date"], errors="coerce").dt.date  # ✅ strip to date only
+        df["Order Date"] = pd.to_datetime(df["Order Date"], errors="coerce")
+        # ✅ keep original text if parsing failed
+        if df["Order Date"].isna().any():
+            df["Order Date_raw"] = df["Order Date"]
+        df["Order Date"] = df["Order Date"].dt.date
+
+# --- Merge (keep all rows from Summary.xlsx) ---
+join_keys = ["User", "Order Date"]
 
 try:
     df = pd.merge(
@@ -43,11 +48,10 @@ except Exception as e:
     st.error(f"Merge failed on {join_keys}: {e}")
     st.stop()
 
-# --- Unify Sum/Sec columns into clean ones ---
+# --- Unify Sum/Sec columns ---
 def unify_columns(df, base):
     sum_col, sec_col = f"{base}_Sum", f"{base}_Sec"
     if sum_col in df.columns and sec_col in df.columns:
-        # Prefer Summary (_Sum), fallback to Secondary (_Sec)
         df[base] = df[sum_col].combine_first(df[sec_col])
         df.drop(columns=[sum_col, sec_col], inplace=True)
     elif sum_col in df.columns:
@@ -58,14 +62,24 @@ def unify_columns(df, base):
         df.drop(columns=[sec_col], inplace=True)
     return df
 
-# Columns we want unified for filters
 for col in ["Region", "Territory", "Reporting Manager", "Distributor",
             "L4Position User", "L3Position User", "L2Position User"]:
     df = unify_columns(df, col)
 
-# --- Debug: Show merged column names ---
-with st.expander("🔎 Debug: Show all merged column names"):
-    st.write(list(df.columns))
+# --- Debug: Row counts at each step ---
+with st.expander("🔎 Row counts at each step"):
+    st.write("Rows in Summary.xlsx:", len(df_summary))
+    st.write("Rows in Secondary.xlsx:", len(df_secondary))
+    st.write("Rows after merge:", len(df))
+
+# --- Debug: Date coverage ---
+if "Order Date" in df.columns:
+    with st.expander("🔎 Order Date coverage"):
+        st.write("Summary min/max:", df_summary["Order Date"].min(), df_summary["Order Date"].max())
+        st.write("Secondary min/max:", df_secondary["Order Date"].min(), df_secondary["Order Date"].max())
+        st.write("Merged min/max:", df["Order Date"].min(), df["Order Date"].max())
+        st.write("Unique dates in Summary (first 20):", sorted(df_summary["Order Date"].unique())[:20])
+        st.write("Unique dates in Merged (first 20):", sorted(df["Order Date"].unique())[:20])
 
 # --- Ensure extra columns exist ---
 extra_cols = [
@@ -76,20 +90,15 @@ for c in extra_cols:
     if c not in df.columns:
         df[c] = 0 if "Call" not in c and "Time" not in c else pd.NaT
 
-# --- Compute retail time safely (HH:MM format, default 00:00 if missing) ---
+# --- Compute retail time safely ---
 if {"First Call", "Last Call"}.issubset(df.columns):
     first = pd.to_datetime(df["First Call"], format="%H:%M", errors="coerce")
     last = pd.to_datetime(df["Last Call"], format="%H:%M", errors="coerce")
-
     diff_minutes = (last - first).dt.total_seconds() / 60
-    diff_minutes = pd.to_numeric(diff_minutes, errors="coerce").fillna(0).clip(lower=0)
-    diff_minutes = diff_minutes.astype(int)
+    diff_minutes = pd.to_numeric(diff_minutes, errors="coerce").fillna(0).clip(lower=0).astype(int)
+    df["Total Retail Time(Hh:Mm)"] = diff_minutes.apply(lambda x: f"{x // 60:02d}:{x % 60:02d}")
 
-    df["Total Retail Time(Hh:Mm)"] = diff_minutes.apply(
-        lambda x: f"{x // 60:02d}:{x % 60:02d}"
-    )
-
-# --- Filters (robust matching + date range) ---
+# --- Filters ---
 st.markdown("### Filters")
 
 required_filters = [
@@ -100,52 +109,39 @@ required_filters = [
 filter_selections = {}
 available_cols = {c.lower().replace(" ", "").replace("_",""): c for c in df.columns}
 
-matched_filters = {}
-missing_filters = []
-
 for f in required_filters:
     f_key = f.lower().replace(" ", "").replace("_","")
-    if f == "Order Date":
-        if "orderdate" in available_cols:
-            col = available_cols["orderdate"]
-            min_date, max_date = df[col].min(), df[col].max()
-            start, end = st.date_input(
-                "Order Date Range",
-                value=(min_date, max_date),
-                min_value=min_date,
-                max_value=max_date
-            )
-            filter_selections[col] = (start, end)
-            matched_filters[f] = col
-        else:
-            missing_filters.append(f)
+    if f == "Order Date" and "orderdate" in available_cols:
+        col = available_cols["orderdate"]
+        min_date, max_date = df[col].min(), df[col].max()
+        start, end = st.date_input(
+            "Order Date Range",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date
+        )
+        filter_selections[col] = (start, end)
+    elif f_key in available_cols:
+        col = available_cols[f_key]
+        vals = df[col].dropna().unique().tolist()
+        if vals:
+            sel = st.multiselect(f, sorted(vals), key=f"f_{f}")
+            filter_selections[col] = sel
     else:
-        if f_key in available_cols:
-            col = available_cols[f_key]
-            matched_filters[f] = col
-            vals = df[col].dropna().unique().tolist()
-            if vals:
-                sel = st.multiselect(f, sorted(vals), key=f"f_{f}")
-                filter_selections[col] = sel
-        else:
-            missing_filters.append(f)
+        st.info(f"⚠️ Column '{f}' not found in merged data.")
 
-# --- Debug panel for filter matching ---
-with st.expander("🔎 Filter Matching Debug"):
-    st.write("✅ Matched filters:", matched_filters)
-    st.write("⚠️ Missing filters (not found in merged data):", missing_filters)
-
-# --- Apply filters ---
 df_filtered = df.copy()
 for col, sel in filter_selections.items():
-    if col == "Order Date" and isinstance(sel, tuple):  # ✅ date range
+    if col == "Order Date" and isinstance(sel, tuple):
         start, end = sel
         if start and end:
-            df_filtered = df_filtered[
-                (df_filtered[col] >= start) & (df_filtered[col] <= end)
-            ]
+            df_filtered = df_filtered[(df_filtered[col] >= start) & (df_filtered[col] <= end)]
     elif sel:
         df_filtered = df_filtered[df_filtered[col].isin(sel)]
+
+# --- Debug: Row counts after filters ---
+with st.expander("🔎 Row counts after filters"):
+    st.write("Rows after filters:", len(df_filtered))
 
 # --- Final locked column order ---
 final_columns = [
