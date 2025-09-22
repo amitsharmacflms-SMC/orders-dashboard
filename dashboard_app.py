@@ -87,7 +87,7 @@ if {"First Call", "Last Call"}.issubset(df.columns):
         lambda x: f"{x // 60:02d}:{x % 60:02d}"
     )
 
-# --- Filters (robust matching) ---
+# --- Filters (robust matching + date range) ---
 st.markdown("### Filters")
 
 required_filters = [
@@ -103,15 +103,31 @@ missing_filters = []
 
 for f in required_filters:
     f_key = f.lower().replace(" ", "").replace("_","")
-    if f_key in available_cols:
-        col = available_cols[f_key]
-        matched_filters[f] = col
-        vals = df[col].dropna().unique().tolist()
-        if vals:
-            sel = st.multiselect(f, sorted(vals), key=f"f_{f}")
-            filter_selections[col] = sel
+    if f == "Order Date":
+        # ✅ Special case: date range filter
+        if "orderdate" in available_cols:
+            col = available_cols["orderdate"]
+            min_date, max_date = df[col].min(), df[col].max()
+            start, end = st.date_input(
+                "Order Date Range",
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date
+            )
+            filter_selections[col] = (start, end)
+            matched_filters[f] = col
+        else:
+            missing_filters.append(f)
     else:
-        missing_filters.append(f)
+        if f_key in available_cols:
+            col = available_cols[f_key]
+            matched_filters[f] = col
+            vals = df[col].dropna().unique().tolist()
+            if vals:
+                sel = st.multiselect(f, sorted(vals), key=f"f_{f}")
+                filter_selections[col] = sel
+        else:
+            missing_filters.append(f)
 
 # --- Debug panel for filter matching ---
 with st.expander("🔎 Filter Matching Debug"):
@@ -121,7 +137,13 @@ with st.expander("🔎 Filter Matching Debug"):
 # --- Apply filters ---
 df_filtered = df.copy()
 for col, sel in filter_selections.items():
-    if sel:
+    if col == "Order Date" and isinstance(sel, tuple):  # ✅ date range
+        start, end = sel
+        if start and end:
+            df_filtered = df_filtered[
+                (df_filtered[col] >= start) & (df_filtered[col] <= end)
+            ]
+    elif sel:
         df_filtered = df_filtered[df_filtered[col].isin(sel)]
 
 # --- Final locked column order ---
