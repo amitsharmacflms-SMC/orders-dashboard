@@ -161,7 +161,7 @@ else:
     if "User" in df_secondary.columns:
         dup_counts = df_secondary["User"].value_counts().rename_axis("User").reset_index(name="Secondary_rows_count")
         with st.expander("🔎 Secondary rows per User (sample)"):
-            st.write(dup_counts.head(200))
+            st.write(dup_counts.head)
 
 # Perform left merge (keep all summary rows)
 try:
@@ -312,7 +312,7 @@ k3.metric("Outlets", final_df["Outlet Name"].nunique() if "Outlet Name" in final
 k4.metric("Territories", final_df["Territory"].nunique() if "Territory" in final_df.columns else 0)
 
 st.markdown("### Results Table (Top 200 Rows)")
-st.dataframe(final_df.head(200), width=TABLE_WIDTH_MODE)
+st.dataframe(final_df), width=TABLE_WIDTH_MODE)
 
 def to_csv_bytes(df_obj):
     return df_obj.to_csv(index=False).encode("utf-8")
