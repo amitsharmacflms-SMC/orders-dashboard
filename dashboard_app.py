@@ -36,7 +36,7 @@ for df in [df_summary, df_secondary]:
 try:
     df = pd.merge(
         df_summary, df_secondary,
-        on=join_keys, how="outer",
+        on=join_keys, how="left",   # ✅ keep all rows from Summary.xlsx
         suffixes=("_Sum", "_Sec")
     )
 except Exception as e:
@@ -47,13 +47,15 @@ except Exception as e:
 def unify_columns(df, base):
     sum_col, sec_col = f"{base}_Sum", f"{base}_Sec"
     if sum_col in df.columns and sec_col in df.columns:
+        # Prefer Summary (_Sum), fallback to Secondary (_Sec)
         df[base] = df[sum_col].combine_first(df[sec_col])
+        df.drop(columns=[sum_col, sec_col], inplace=True)
     elif sum_col in df.columns:
         df[base] = df[sum_col]
+        df.drop(columns=[sum_col], inplace=True)
     elif sec_col in df.columns:
         df[base] = df[sec_col]
-    # ✅ Drop the original _Sum/_Sec
-    df.drop(columns=[c for c in [sum_col, sec_col] if c in df.columns], inplace=True, errors="ignore")
+        df.drop(columns=[sec_col], inplace=True)
     return df
 
 # Columns we want unified for filters
@@ -104,7 +106,6 @@ missing_filters = []
 for f in required_filters:
     f_key = f.lower().replace(" ", "").replace("_","")
     if f == "Order Date":
-        # ✅ Special case: date range filter
         if "orderdate" in available_cols:
             col = available_cols["orderdate"]
             min_date, max_date = df[col].min(), df[col].max()
