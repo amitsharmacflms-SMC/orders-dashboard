@@ -31,7 +31,7 @@ join_keys = ["User", "Order Date"]
 
 for df in [df_summary, df_secondary]:
     if "Order Date" in df.columns:
-        df["Order Date"] = pd.to_datetime(df["Order Date"], errors="coerce")
+        df["Order Date"] = pd.to_datetime(df["Order Date"], errors="coerce").dt.date  # ✅ strip to date only
 
 try:
     df = pd.merge(
@@ -52,6 +52,8 @@ def unify_columns(df, base):
         df[base] = df[sum_col]
     elif sec_col in df.columns:
         df[base] = df[sec_col]
+    # ✅ Drop the original _Sum/_Sec
+    df.drop(columns=[c for c in [sum_col, sec_col] if c in df.columns], inplace=True, errors="ignore")
     return df
 
 # Columns we want unified for filters
