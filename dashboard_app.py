@@ -4,9 +4,6 @@ from io import BytesIO
 
 st.set_page_config(page_title="Orders Dashboard", layout="wide")
 
-# --- Global table width mode ---
-TABLE_WIDTH_MODE = "stretch"   # change to "content" if you don’t want full width
-
 # --- Normalize column names ---
 def normalize_columns(df):
     df = df.copy()
@@ -56,37 +53,30 @@ for c in extra_cols:
     if c not in df.columns:
         df[c] = 0 if "Call" not in c and "Time" not in c else pd.NaT
 
-# Compute retail time if possible
-if {"First Call", "Last Call"}.issubset(df.columns):
+# --- Compute retail time safely ---
+if "First Call" in df.columns and "Last Call" in df.columns:
     first = pd.to_datetime(df["First Call"], errors="coerce")
     last = pd.to_datetime(df["Last Call"], errors="coerce")
-    mask = first.notna() & last.notna()
-    df.loc[mask, "Total Retail Time(Hh:Mm)"] = (
-        (last - first).dt.total_seconds().div(60).astype(int)
-        .apply(lambda x: f"{x//60:02d}:{x%60:02d}")
+    diff_minutes = (last - first).dt.total_seconds() / 60
+    diff_minutes = pd.to_numeric(diff_minutes, errors="coerce").fillna(0).clip(lower=0)
+    diff_minutes = diff_minutes.astype(int)
+    df["Total Retail Time(Hh:Mm)"] = diff_minutes.apply(
+        lambda x: f"{x//60:02d}:{x%60:02d}"
     )
 
-# --- Filters (robust matching) ---
+# --- Filters (only the 9 requested) ---
 st.markdown("### Filters")
 
 required_filters = [
     "Order Date","Region","Territory","L4Position User","L3Position User",
-    "L2Position User","Reporting Manager","Primary Category","User"
+    "L2Position User","Reporting Manager","Primary Category","User"   # <-- fixed spelling
 ]
 
-# Reset button
-if st.button("🔄 Reset Filters"):
-    for f in required_filters:
-        st.session_state[f"f_{f}"] = []
-
 filter_selections = {}
-# Build normalized lookup: "primarycategory" -> "Primarycategory"
-available_cols = {c.lower().replace(" ", "").replace("_",""): c for c in df.columns}
-
 for f in required_filters:
-    f_key = f.lower().replace(" ", "").replace("_","")
-    if f_key in available_cols:
-        col = available_cols[f_key]
+    col = [c for c in df.columns if c.lower() == f.lower()]
+    if col:
+        col = col[0]
         vals = df[col].dropna().unique().tolist()
         if vals:
             sel = st.multiselect(f, sorted(vals), key=f"f_{f}")
@@ -94,16 +84,10 @@ for f in required_filters:
     else:
         st.info(f"⚠️ Column '{f}' not found in merged data.")
 
-# --- Apply filters ---
 df_filtered = df.copy()
 for col, sel in filter_selections.items():
-    if sel:  # Only filter if something is selected
+    if sel:
         df_filtered = df_filtered[df_filtered[col].isin(sel)]
-
-# Debug info
-with st.expander("🔎 Active Filters & Row Count"):
-    st.write("Active filter selections:", filter_selections)
-    st.write("Filtered rows:", len(df_filtered))
 
 # --- Final locked column order ---
 final_columns = [
@@ -125,7 +109,7 @@ k4.metric("Territories", final_df["Territory"].nunique() if "Territory" in final
 
 # --- Table ---
 st.markdown("### Results Table (Top 200 Rows)")
-st.dataframe(final_df.head(200), width=TABLE_WIDTH_MODE)
+st.dataframe(final_df.head(200), width="stretch")   # <-- updated for Streamlit 2025
 
 # --- Export ---
 def to_csv_bytes(df_obj):
