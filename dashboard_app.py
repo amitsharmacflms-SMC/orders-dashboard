@@ -58,6 +58,7 @@ for c in extra_cols:
 
 # --- Compute retail time safely (HH:MM format, default 00:00 if missing) ---
 if {"First Call", "Last Call"}.issubset(df.columns):
+    # Explicit HH:MM parsing
     first = pd.to_datetime(df["First Call"], format="%H:%M", errors="coerce")
     last = pd.to_datetime(df["Last Call"], format="%H:%M", errors="coerce")
 
