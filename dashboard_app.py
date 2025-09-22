@@ -28,26 +28,27 @@ def load_data():
 
 df_summary, df_secondary = load_data()
 
-# --- Merge on exact keys ---
-st.markdown("### Merge Settings")
-all_cols = sorted(set(df_summary.columns) | set(df_secondary.columns))
-join_keys = st.multiselect(
-    "Select join keys", 
-    options=all_cols, 
-    default=[c for c in ["User","Order Date"] if c in all_cols]
-)
+# --- Merge on exact join keys ---
+join_keys = ["User", "Order Date"]
 
-if join_keys:
-    try:
-        df = pd.merge(df_summary, df_secondary, on=join_keys, how="outer", suffixes=("_sum","_sec"))
-    except Exception as e:
-        st.error(f"Merge failed: {e}. Showing concatenated data instead.")
-        df = pd.concat([df_summary.reset_index(drop=True), df_secondary.reset_index(drop=True)], axis=1)
-else:
-    st.warning("No join keys selected. Concatenating instead.")
+# Ensure "Order Date" is datetime in both
+for df in [df_summary, df_secondary]:
+    if "Order Date" in df.columns:
+        df["Order Date"] = pd.to_datetime(df["Order Date"], errors="coerce")
+
+try:
+    df = pd.merge(
+        df_summary,
+        df_secondary,
+        on=join_keys,
+        how="outer",
+        suffixes=("_sum", "_sec")
+    )
+except Exception as e:
+    st.error(f"Merge failed on {join_keys}: {e}")
     df = pd.concat([df_summary.reset_index(drop=True), df_secondary.reset_index(drop=True)], axis=1)
 
-# --- Add extra columns ---
+# --- Add extra columns if missing ---
 extra_cols = [
     "TC","PC","OVC","First Call","Last Call","Total Retail Time(HH:MM)",
     "Ghee","Dw Primary Packs","Dw Consu","DW Bulk","36 No","SMP","GJM","Cream","UHT Milk","Flavored Milk"
@@ -66,23 +67,13 @@ if "First Call" in df.columns and "Last Call" in df.columns:
 
 # --- Filters ---
 st.markdown("### Filters")
-summary_filter_cols = ["Date","Region","L4Position User","L3Position User","L2Position User","Reporting Manager","User"]
-secondary_filter_cols = ["Territory","PrimaryCategory"]
+filter_cols = ["Order Date","Region","Territory","L4Position User","L3Position User","L2Position User","Reporting Manager","PrimaryCategory","User"]
 
 filter_selections = {}
-fc1, fc2 = st.columns(2)
-with fc1:
-    st.markdown("**Summary Filters**")
-    for c in summary_filter_cols:
-        if c in df.columns:
-            sel = st.multiselect(c, sorted(df[c].dropna().unique()), key=f"f_{c}")
-            filter_selections[c] = sel
-with fc2:
-    st.markdown("**Secondary Filters**")
-    for c in secondary_filter_cols:
-        if c in df.columns:
-            sel = st.multiselect(c, sorted(df[c].dropna().unique()), key=f"f_{c}")
-            filter_selections[c] = sel
+for c in filter_cols:
+    if c in df.columns:
+        sel = st.multiselect(c, sorted(df[c].dropna().unique()), key=f"f_{c}")
+        filter_selections[c] = sel
 
 df_filtered = df.copy()
 for col, sel in filter_selections.items():
