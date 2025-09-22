@@ -18,31 +18,47 @@ def normalize_columns(df):
     return df
 
 def robust_parse_date_col(series):
-    """Try multiple formats, Excel serials, then fallback to generic parser.
-       Returns a pd.Series of python date objects (or NaT)."""
+    """
+    Safer robust date parsing:
+    - try several explicit formats
+    - for numeric-like values, convert Excel serials (unit='d', origin='1899-12-30')
+      but only for the numeric subset to avoid dtype-casting errors
+    - fallback to generic parser
+    Returns pd.Series of python date objects (or NaT)
+    """
     s = series.copy()
     s_str = s.astype(str).str.strip()
 
-    # 1) Try explicit formats
+    # 1) Try explicit common formats
     parsed = pd.to_datetime(s_str, format="%Y-%m-%d", errors="coerce")
     for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d", "%d-%b-%Y", "%d %b %Y", "%m/%d/%Y", "%d.%m.%Y"):
         parsed = parsed.fillna(pd.to_datetime(s_str, format=fmt, errors="coerce"))
 
-    # 2) If values look numeric (Excel serial), attempt origin conversion
+    # 2) Try Excel-style serial numbers but only on numeric entries
     s_num = pd.to_numeric(series, errors="coerce")
-    if s_num.notna().any():
-        parsed = parsed.fillna(pd.to_datetime(s_num, unit="d", origin="1899-12-30", errors="coerce"))
+    mask = s_num.notna()
+    if mask.any():
+        try:
+            # convert numeric subset -> numpy array, convert, then align back via Series
+            nums = s_num[mask].astype("float64").values
+            converted = pd.to_datetime(nums, unit="d", origin="1899-12-30", errors="coerce")
+            converted_series = pd.Series(converted, index=s_num[mask].index)
+            parsed = parsed.fillna(converted_series)
+        except Exception:
+            # fallback to elementwise conversion for the numeric subset
+            converted_series = s_num[mask].apply(lambda x: pd.to_datetime(float(x), unit="d", origin="1899-12-30", errors="coerce"))
+            parsed = parsed.fillna(converted_series)
 
     # 3) Final fallback to generic parser (dateutil)
     parsed = parsed.fillna(pd.to_datetime(s_str, errors="coerce"))
 
+    # Return date (not datetime) for consistent downstream filtering
     return parsed.dt.date
 
 def aggregate_secondary(df_secondary, join_keys):
     """Aggregate secondary to unique join_keys rows.
        Numeric columns -> sum, non-numeric -> first non-null."""
     df = df_secondary.copy()
-    # determine numeric and object cols
     nums = df.select_dtypes(include=["number"]).columns.tolist()
     objs = [c for c in df.select_dtypes(include=["object", "category"]).columns.tolist() if c not in join_keys]
 
@@ -142,7 +158,6 @@ else:
     join_keys = ["User"]
     st.warning("Secondary.xlsx does NOT have 'Order Date'. Aggregating Secondary by 'User' only and falling back to merge on 'User'. This may attach aggregated Secondary data across multiple Summary dates for the same user.")
     df_secondary_agg = aggregate_secondary(df_secondary, join_keys)
-    # show sample counts per user
     if "User" in df_secondary.columns:
         dup_counts = df_secondary["User"].value_counts().rename_axis("User").reset_index(name="Secondary_rows_count")
         with st.expander("🔎 Secondary rows per User (sample)"):
@@ -187,7 +202,6 @@ for c in extra_cols:
 # Compute retail time safely (First Call / Last Call)
 # ---------------------
 if {"First Call", "Last Call"}.issubset(df.columns):
-    # parse times; primary format HH:MM, fallback to generic
     first_parsed = parse_time_series(df["First Call"])
     last_parsed = parse_time_series(df["Last Call"])
 
@@ -195,7 +209,6 @@ if {"First Call", "Last Call"}.issubset(df.columns):
     diff_minutes = pd.to_numeric(diff_minutes, errors="coerce").fillna(0).clip(lower=0).astype(int)
     df["Total Retail Time(Hh:Mm)"] = diff_minutes.apply(lambda x: f"{x // 60:02d}:{x % 60:02d}")
 else:
-    # ensure column exists
     if "Total Retail Time(Hh:Mm)" not in df.columns:
         df["Total Retail Time(Hh:Mm)"] = "00:00"
 
@@ -218,10 +231,8 @@ missing_filters = []
 # Date range special handling
 if "orderdate" in available_cols:
     date_col = available_cols["orderdate"]
-    # get min/max from merged df (skip NaT)
     min_date = df[date_col].dropna().min()
     max_date = df[date_col].dropna().max()
-    # fallback to summary if merge lacks parsed dates
     if (pd.isna(min_date) or pd.isna(max_date)) and "Order Date" in df_summary.columns:
         min_date = df_summary["Order Date"].dropna().min()
         max_date = df_summary["Order Date"].dropna().max()
