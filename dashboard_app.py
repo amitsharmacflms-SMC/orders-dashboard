@@ -78,8 +78,9 @@ if "Order Date" in df.columns:
         st.write("Summary min/max:", df_summary["Order Date"].min(), df_summary["Order Date"].max())
         st.write("Secondary min/max:", df_secondary["Order Date"].min(), df_secondary["Order Date"].max())
         st.write("Merged min/max:", df["Order Date"].min(), df["Order Date"].max())
-        st.write("Unique dates in Summary (first 20):", sorted(df_summary["Order Date"].unique())[:20])
-        st.write("Unique dates in Merged (first 20):", sorted(df["Order Date"].unique())[:20])
+        st.write("Unique dates in Summary:", sorted(df_summary["Order Date"].unique()))
+st.write("Unique dates in Merged:", sorted(df["Order Date"].unique()))
+
 
 # --- Ensure extra columns exist ---
 extra_cols = [
