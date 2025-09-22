@@ -4,6 +4,9 @@ from io import BytesIO
 
 st.set_page_config(page_title="Orders Dashboard", layout="wide")
 
+# --- Global table width mode ---
+TABLE_WIDTH_MODE = "stretch"   # change to "content" if you don’t want full width
+
 # --- Normalize column names ---
 def normalize_columns(df):
     df = df.copy()
@@ -53,15 +56,24 @@ for c in extra_cols:
     if c not in df.columns:
         df[c] = 0 if "Call" not in c and "Time" not in c else pd.NaT
 
-# --- Compute retail time safely ---
-if "First Call" in df.columns and "Last Call" in df.columns:
-    first = pd.to_datetime(df["First Call"], errors="coerce")
-    last = pd.to_datetime(df["Last Call"], errors="coerce")
+# --- Compute retail time safely (default to 00:00 if missing/invalid) ---
+if {"First Call", "Last Call"}.issubset(df.columns):
+    # ✅ Parse using fixed format to avoid warnings
+    first = pd.to_datetime(df["First Call"], format="%H:%M:%S", errors="coerce")
+    last = pd.to_datetime(df["Last Call"], format="%H:%M:%S", errors="coerce")
+
+    # Calculate difference in minutes
     diff_minutes = (last - first).dt.total_seconds() / 60
+
+    # Ensure numeric, replace bad with 0, clip negatives
     diff_minutes = pd.to_numeric(diff_minutes, errors="coerce").fillna(0).clip(lower=0)
+
+    # Convert to int minutes
     diff_minutes = diff_minutes.astype(int)
+
+    # Format as hh:mm string
     df["Total Retail Time(Hh:Mm)"] = diff_minutes.apply(
-        lambda x: f"{x//60:02d}:{x%60:02d}"
+        lambda x: f"{x // 60:02d}:{x % 60:02d}"
     )
 
 # --- Filters (only the 9 requested) ---
@@ -69,7 +81,7 @@ st.markdown("### Filters")
 
 required_filters = [
     "Order Date","Region","Territory","L4Position User","L3Position User",
-    "L2Position User","Reporting Manager","Primary Category","User"   # <-- fixed spelling
+    "L2Position User","Reporting Manager","Primary Category","User"
 ]
 
 filter_selections = {}
@@ -109,7 +121,7 @@ k4.metric("Territories", final_df["Territory"].nunique() if "Territory" in final
 
 # --- Table ---
 st.markdown("### Results Table (Top 200 Rows)")
-st.dataframe(final_df.head(200), width="stretch")   # <-- updated for Streamlit 2025
+st.dataframe(final_df.head(200), width="stretch")
 
 # --- Export ---
 def to_csv_bytes(df_obj):
