@@ -56,11 +56,10 @@ for c in extra_cols:
     if c not in df.columns:
         df[c] = 0 if "Call" not in c and "Time" not in c else pd.NaT
 
-# --- Compute retail time safely (default to 00:00 if missing/invalid) ---
+# --- Compute retail time safely (HH:MM format, default 00:00 if missing) ---
 if {"First Call", "Last Call"}.issubset(df.columns):
-    # ✅ Parse using fixed format to avoid warnings
-    first = pd.to_datetime(df["First Call"], format="%H:%M:%S", errors="coerce")
-    last = pd.to_datetime(df["Last Call"], format="%H:%M:%S", errors="coerce")
+    first = pd.to_datetime(df["First Call"], format="%H:%M", errors="coerce")
+    last = pd.to_datetime(df["Last Call"], format="%H:%M", errors="coerce")
 
     # Calculate difference in minutes
     diff_minutes = (last - first).dt.total_seconds() / 60
