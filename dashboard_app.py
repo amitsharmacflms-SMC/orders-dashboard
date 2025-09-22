@@ -150,8 +150,8 @@ filter_selections = {}
 available_cols = {c.lower().replace(" ", "").replace("_",""): c for c in df.columns}
 
 # Special: date range
-if "orderdate" in available_cols:
-    date_col = available_cols["orderdate"]
+if "Date" in available_cols:
+    date_col = available_cols["Date"]
     # get min/max from merged df (skip NaT)
     min_date = df[date_col].dropna().min()
     max_date = df[date_col].dropna().max()
@@ -169,7 +169,7 @@ if "orderdate" in available_cols:
 
 # Other filters
 for f in required_filters:
-    if f.lower().replace(" ", "").replace("_","") == "orderdate":
+    if f.lower().replace(" ", "").replace("_","") == "Date":
         continue
     key = f.lower().replace(" ", "").replace("_","")
     if key in available_cols:
@@ -190,7 +190,7 @@ with st.expander("🔎 Row counts at each step"):
 # --- Apply filters ---
 df_filtered = df.copy()
 for col, sel in filter_selections.items():
-    if col == available_cols.get("orderdate") and isinstance(sel, tuple):
+    if col == available_cols.get("Date") and isinstance(sel, tuple):
         start, end = sel
         if start and end:
             df_filtered = df_filtered[(df_filtered[col] >= start) & (df_filtered[col] <= end)]
