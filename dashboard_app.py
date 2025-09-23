@@ -145,24 +145,27 @@ with tab1:
                 df_filtered = df_filtered[df_filtered[f].isin(sel)]
 
     # ---- Column Selection ----
-    allowed_cols = [
-        # Summary
-        "Order Date","L4Position User","L3Position User","L2Position User","Region",
-        "Reporting Manager","User","Selected Jw User","Type","Reason",
-        "Tc","Pc","Ovc","First Call","Last Call","Total Retail Time(Hh:Mm)",
-        "Ghee","Dw Primary Packs","Dw Consu","Dw Bulk","36 No","Smp","Gjm",
-        "Cream","Uht Milk","Flavored Milk",
-        # Secondary
-        "Distributor","Territory","Beat"
-    ]
+    # curated list (Summary + Secondary)
+curated_cols = [
+    "Order Date","L4Position User","L3Position User","L2Position User","Region",
+    "Reporting Manager","User","Selected Jw User","Type","Reason",
+    "Tc","Pc","Ovc","First Call","Last Call","Total Retail Time(Hh:Mm)",
+    "Ghee","Dw Primary Packs","Dw Consu","Dw Bulk","36 No","Smp","Gjm",
+    "Cream","Uht Milk","Flavored Milk",
+    "Distributor","Territory","Beat"
+]
 
-    cols_available = ["All"] + [c for c in allowed_cols if c in df_filtered.columns]
-    selected_cols = st.multiselect("Columns Wants in Table", cols_available, default="All")
+# keep only those present in df_filtered
+allowed_cols = [c for c in curated_cols if c in df_filtered.columns]
 
-    if "All" in selected_cols or not selected_cols:
-        final_df = df_filtered[allowed_cols]
-    else:
-        final_df = df_filtered[selected_cols]
+cols_available = ["All"] + allowed_cols
+selected_cols = st.multiselect("Columns Wants in Table", cols_available, default="All")
+
+if "All" in selected_cols or not selected_cols:
+    final_df = df_filtered[allowed_cols]
+else:
+    final_df = df_filtered[selected_cols]
+
 
     # ---- Results ----
     st.markdown("### Results Table (Top 200 Rows)")
