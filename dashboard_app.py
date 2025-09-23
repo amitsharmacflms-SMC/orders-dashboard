@@ -145,25 +145,6 @@ if "User" in df_secondary.columns:
     df_secondary["User"] = df_secondary["User"].astype(str).str.strip().str.upper()
 
 # ---------------------
-# Diagnostic: Check failed parses
-# ---------------------
-with st.expander("🔎 Diagnostic: Raw dates that failed to parse"):
-    for label, raw_df in [("Summary", df_summary_raw), ("Secondary", df_secondary_raw)]:
-        if "Order Date" in raw_df.columns or "Date" in raw_df.columns:
-            colname = "Order Date" if "Order Date" in raw_df.columns else "Date"
-            parsed_check = robust_parse_date_col(raw_df[colname])
-            df_debug = pd.DataFrame({
-                "raw_value": raw_df[colname].astype(str).str.strip(),
-                "parsed_value": parsed_check
-            })
-            failed = df_debug[df_debug["parsed_value"].isna()]["raw_value"].value_counts()
-            st.write(f"**{label} failed date values:**")
-            if not failed.empty:
-                st.write(failed.head(200))
-            else:
-                st.write("No failures")
-
-# ---------------------
 # Merge
 # ---------------------
 if "Order Date" in df_secondary.columns:
@@ -209,9 +190,11 @@ required_filters = [
 filter_selections = {}
 available_cols = {c.lower().replace(" ", "").replace("_",""): c for c in df.columns}
 
+# ✅ FIX: Always use Summary date range, not merged df
 if "orderdate" in available_cols:
     date_col = available_cols["orderdate"]
-    min_date, max_date = df[date_col].dropna().min(), df[date_col].dropna().max()
+    min_date = df_summary["Order Date"].dropna().min()
+    max_date = df_summary["Order Date"].dropna().max()
     if pd.notna(min_date) and pd.notna(max_date):
         start, end = st.date_input("Order Date Range", value=(min_date, max_date),
                                    min_value=min_date, max_value=max_date)
