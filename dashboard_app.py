@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 
-st.set_page_config(page_title="Orders Dashboard", layout="wide")
+st.set_page_config(page_title="Daily Sales Summary", layout="wide")
 TABLE_WIDTH_MODE = "stretch"
 
 # ---------------------
