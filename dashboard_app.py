@@ -18,44 +18,18 @@ def normalize_columns(df):
     return df
 
 def robust_parse_date_col(series):
-    """Safe robust date parsing (formats + Excel serials + fallback)."""
     s = series.copy()
     s_str = s.astype(str).str.strip()
-
-    # 1) Try explicit formats
-    parsed = pd.to_datetime(s_str, format="%Y-%m-%d", errors="coerce")
-    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d", "%d-%b-%Y", "%d %b %Y", "%m/%d/%Y", "%d.%m.%Y"):
-        parsed = parsed.fillna(pd.to_datetime(s_str, format=fmt, errors="coerce"))
-
-    # 2) Excel-style serial numbers
-    s_num = pd.to_numeric(series, errors="coerce")
-    mask = s_num.notna()
-    if mask.any():
-        try:
-            nums = s_num[mask].astype("float64").values
-            converted = pd.to_datetime(nums, unit="d", origin="1899-12-30", errors="coerce")
-            converted_series = pd.Series(converted, index=s_num[mask].index)
-            parsed = parsed.fillna(converted_series)
-        except Exception:
-            converted_series = s_num[mask].apply(
-                lambda x: pd.to_datetime(float(x), unit="d", origin="1899-12-30", errors="coerce")
-            )
-            parsed = parsed.fillna(converted_series)
-
-    # 3) Final fallback
-    parsed = parsed.fillna(pd.to_datetime(s_str, errors="coerce"))
+    parsed = pd.to_datetime(s_str, errors="coerce")
     return parsed.dt.date
 
 def aggregate_secondary(df_secondary, join_keys):
-    """Aggregate secondary to unique join_keys rows."""
     df = df_secondary.copy()
     nums = df.select_dtypes(include=["number"]).columns.tolist()
     objs = [c for c in df.select_dtypes(include=["object", "category"]).columns.tolist() if c not in join_keys]
-
     agg_dict = {c: "sum" for c in nums}
     for c in objs:
         agg_dict[c] = "first"
-
     grouped = df.groupby(join_keys, dropna=False).agg(agg_dict).reset_index()
     return grouped
 
@@ -73,7 +47,6 @@ def unify_columns_and_drop(df_local, base):
     return df_local
 
 def parse_time_series(series):
-    """Parse HH:MM times with fallback."""
     parsed = pd.to_datetime(series, format="%H:%M", errors="coerce")
     if parsed.isna().all():
         parsed = pd.to_datetime(series, errors="coerce")
@@ -112,66 +85,25 @@ if "User" in df_summary.columns:
 if "User" in df_secondary.columns:
     df_secondary["User"] = df_secondary["User"].astype(str).str.strip().str.upper()
 
-# ---------------------
 # Aggregate Secondary
-# ---------------------
 if "Order Date" in df_secondary.columns:
     join_keys = ["User", "Order Date"]
-    st.info("Secondary has 'Order Date'. Aggregating by (User, Order Date).")
     df_secondary_agg = aggregate_secondary(df_secondary, join_keys)
 else:
     join_keys = ["User"]
-    st.warning("Secondary has NO 'Order Date'. Aggregating by User only.")
     df_secondary_agg = aggregate_secondary(df_secondary, join_keys)
 
-# ---------------------
-# Diagnostic Merge
-# ---------------------
-st.markdown("### 🔍 Secondary Merge Diagnostics (fixed)")
-
-s = df_summary.copy()
-t = df_secondary_agg.copy()
-
-s["__user__"] = s["User"].astype(str).str.strip().str.upper() if "User" in s.columns else None
-t["__user__"] = t["User"].astype(str).str.strip().str.upper() if "User" in t.columns else None
-
-s["__date__"] = pd.to_datetime(s["Order Date"], errors="coerce").dt.date if "Order Date" in s.columns else pd.NaT
-t["__date__"] = pd.to_datetime(t["Order Date"], errors="coerce").dt.date if "Order Date" in t.columns else pd.NaT
-
-st.write("Unique users in Summary (sample 20):", sorted(s["__user__"].dropna().unique())[:20])
-st.write("Unique users in Secondary (sample 20):", sorted(t["__user__"].dropna().unique())[:20])
-
-if join_keys:
-    tmp = s.merge(t, on=join_keys, how="left", indicator=True)
-
-    if "__user__" not in tmp.columns:
-        if "User" in tmp.columns:
-            tmp["__user__"] = tmp["User"].astype(str).str.strip().str.upper()
-
-    merge_counts = tmp["_merge"].value_counts().to_dict() if "_merge" in tmp.columns else {}
-    st.write("Merge indicator counts:", merge_counts)
-
-    if "_merge" in tmp.columns and "left_only" in tmp["_merge"].unique():
-        st.write("Rows with no Secondary match (left_only) sample:")
-        st.write(tmp[tmp["_merge"] == "left_only"][["User", "Order Date", "__user__"]].head(20))
-else:
-    st.warning("No merge keys available.")
-
-# ---------------------
-# Perform Merge
-# ---------------------
+# Merge
 df = pd.merge(df_summary, df_secondary_agg, on=join_keys, how="left", suffixes=("_Sum", "_Sec"))
 
-# ---------------------
-# Unify & Clean
-# ---------------------
+# Unify
 for col_base in [
     "Region", "Territory", "Reporting Manager", "Distributor",
     "L4Position User", "L3Position User", "L2Position User", "Primary Category"
 ]:
     df = unify_columns_and_drop(df, col_base)
 
-# Ensure extra columns exist
+# Ensure extra cols
 extra_cols = [
     "Tc","Pc","Ovc","First Call","Last Call","Total Retail Time(Hh:Mm)",
     "Ghee","Dw Primary Packs","Dw Consu","Dw Bulk","36 No","Smp","Gjm","Cream","Uht Milk","Flavored Milk"
@@ -252,9 +184,33 @@ k2.metric("Unique Users", final_df["User"].nunique() if "User" in final_df.colum
 k3.metric("Outlets", final_df["Outlet Name"].nunique() if "Outlet Name" in final_df.columns else 0)
 k4.metric("Territories", final_df["Territory"].nunique() if "Territory" in final_df.columns else 0)
 
+# ---------------------
+# Styled Table
+# ---------------------
 st.markdown("### Results Table (Top 200 Rows)")
+
+# Apply CSS styling
+st.markdown(
+    """
+    <style>
+    .stDataFrame thead tr th {
+        font-weight: bold !important;
+    }
+    .stDataFrame tbody td {
+        font-weight: bold !important;
+        text-align: center !important;
+        border: 1.5px solid black !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 st.dataframe(final_df.head(200), width="stretch")
 
+# ---------------------
+# Export
+# ---------------------
 def to_csv_bytes(df_obj): return df_obj.to_csv(index=False).encode("utf-8")
 def to_excel_bytes(df_obj):
     out = BytesIO()
@@ -265,4 +221,4 @@ def to_excel_bytes(df_obj):
 st.download_button("Download CSV", to_csv_bytes(final_df), "filtered_export.csv", "text/csv")
 st.download_button("Download Excel", to_excel_bytes(final_df),
                    "filtered_export.xlsx",
-                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                   "application/vnd.openxmlformats-officedocument-spreadsheetml.sheet")
