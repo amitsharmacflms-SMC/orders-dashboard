@@ -1,9 +1,50 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+from datetime import date, timedelta
 
-st.set_page_config(page_title="Orders Dashboard", layout="wide")
-TABLE_WIDTH_MODE = "stretch"
+st.set_page_config(page_title="SMC-Madhusudan Daily Working Dashboard", layout="wide")
+
+# ---------------------
+# Header + Tabs
+# ---------------------
+st.markdown(
+    """
+    <style>
+    .main-header {
+        font-size: 32px;
+        font-weight: bold;
+        color: white;
+        background: linear-gradient(90deg, #4a90e2, #9013fe);
+        padding: 15px;
+        border-radius: 10px;
+        text-align: center;
+    }
+    .filter-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 20px;
+    }
+    .stDataFrame thead tr th {
+        font-weight: bold !important;
+        background-color: #4a90e2 !important;
+        color: white !important;
+        text-align: center !important;
+    }
+    .stDataFrame tbody td {
+        font-weight: bold !important;
+        text-align: center !important;
+        border: 1.5px solid #444 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown('<div class="main-header">SMC-Madhusudan Daily Working Dashboard</div>', unsafe_allow_html=True)
+
+tab1, tab2 = st.tabs(["📊 Daily Summary", "🏪 Outlet Wise Report"])
 
 # ---------------------
 # Helpers
@@ -19,38 +60,8 @@ def normalize_columns(df):
 
 def robust_parse_date_col(series):
     s = series.copy()
-    s_str = s.astype(str).str.strip()
-    parsed = pd.to_datetime(s_str, errors="coerce")
+    parsed = pd.to_datetime(s, errors="coerce")
     return parsed.dt.date
-
-def aggregate_secondary(df_secondary, join_keys):
-    df = df_secondary.copy()
-    nums = df.select_dtypes(include=["number"]).columns.tolist()
-    objs = [c for c in df.select_dtypes(include=["object", "category"]).columns.tolist() if c not in join_keys]
-    agg_dict = {c: "sum" for c in nums}
-    for c in objs:
-        agg_dict[c] = "first"
-    grouped = df.groupby(join_keys, dropna=False).agg(agg_dict).reset_index()
-    return grouped
-
-def unify_columns_and_drop(df_local, base):
-    sum_col, sec_col = f"{base}_Sum", f"{base}_Sec"
-    if sum_col in df_local.columns and sec_col in df_local.columns:
-        df_local[base] = df_local[sum_col].combine_first(df_local[sec_col])
-        df_local.drop(columns=[sum_col, sec_col], inplace=True, errors="ignore")
-    elif sum_col in df_local.columns:
-        df_local[base] = df_local[sum_col]
-        df_local.drop(columns=[sum_col], inplace=True, errors="ignore")
-    elif sec_col in df_local.columns:
-        df_local[base] = df_local[sec_col]
-        df_local.drop(columns=[sec_col], inplace=True, errors="ignore")
-    return df_local
-
-def parse_time_series(series):
-    parsed = pd.to_datetime(series, format="%H:%M", errors="coerce")
-    if parsed.isna().all():
-        parsed = pd.to_datetime(series, errors="coerce")
-    return parsed
 
 # ---------------------
 # Load data
@@ -59,13 +70,9 @@ def parse_time_series(series):
 def load_data():
     df_summary = pd.read_excel("Summary.xlsx", engine="openpyxl")
     df_secondary = pd.read_excel("Secondary.xlsx", engine="openpyxl")
-    return df_summary, df_secondary
+    return normalize_columns(df_summary), normalize_columns(df_secondary)
 
-df_summary_raw, df_secondary_raw = load_data()
-
-# Normalize headers
-df_summary = normalize_columns(df_summary_raw)
-df_secondary = normalize_columns(df_secondary_raw)
+df_summary, df_secondary = load_data()
 
 # Rename Date -> Order Date
 if "Date" in df_summary.columns and "Order Date" not in df_summary.columns:
@@ -79,146 +86,91 @@ if "Order Date" in df_summary.columns:
 if "Order Date" in df_secondary.columns:
     df_secondary["Order Date"] = robust_parse_date_col(df_secondary["Order Date"])
 
-# Normalize User
-if "User" in df_summary.columns:
-    df_summary["User"] = df_summary["User"].astype(str).str.strip().str.upper()
-if "User" in df_secondary.columns:
-    df_secondary["User"] = df_secondary["User"].astype(str).str.strip().str.upper()
-
-# Aggregate Secondary
-if "Order Date" in df_secondary.columns:
-    join_keys = ["User", "Order Date"]
-    df_secondary_agg = aggregate_secondary(df_secondary, join_keys)
-else:
-    join_keys = ["User"]
-    df_secondary_agg = aggregate_secondary(df_secondary, join_keys)
-
 # Merge
-df = pd.merge(df_summary, df_secondary_agg, on=join_keys, how="left", suffixes=("_Sum", "_Sec"))
+join_keys = ["User", "Order Date"] if "Order Date" in df_secondary.columns else ["User"]
+df = pd.merge(df_summary, df_secondary, on=join_keys, how="left", suffixes=("_Sum", "_Sec"))
 
-# Unify
-for col_base in [
-    "Region", "Territory", "Reporting Manager", "Distributor",
-    "L4Position User", "L3Position User", "L2Position User", "Primary Category"
-]:
-    df = unify_columns_and_drop(df, col_base)
-
-# Ensure extra cols
-extra_cols = [
-    "Tc","Pc","Ovc","First Call","Last Call","Total Retail Time(Hh:Mm)",
-    "Ghee","Dw Primary Packs","Dw Consu","Dw Bulk","36 No","Smp","Gjm","Cream","Uht Milk","Flavored Milk"
-]
-for c in extra_cols:
-    if c not in df.columns:
-        df[c] = 0 if ("Call" not in c and "Time" not in c) else pd.NaT
-
-# Retail time
-if {"First Call", "Last Call"}.issubset(df.columns):
-    first_parsed = parse_time_series(df["First Call"])
-    last_parsed = parse_time_series(df["Last Call"])
-    diff_minutes = (last_parsed - first_parsed).dt.total_seconds() / 60
-    diff_minutes = pd.to_numeric(diff_minutes, errors="coerce").fillna(0).clip(lower=0).astype(int)
-    df["Total Retail Time(Hh:Mm)"] = diff_minutes.apply(lambda x: f"{x//60:02d}:{x%60:02d}")
+# Drop unwanted cols from table
+remove_cols = ["Outlet Name", "Address", "Market", "Product"]
+df = df.drop(columns=[c for c in remove_cols if c in df.columns], errors="ignore")
 
 # ---------------------
-# Filters
+# DAILY SUMMARY TAB
 # ---------------------
-st.markdown("### Filters")
+with tab1:
+    st.subheader("📊 Daily Summary Report")
 
-required_filters = [
-    "Order Date","Region","Territory","L4Position User","L3Position User",
-    "L2Position User","Reporting Manager","Primary Category","User"
-]
+    # Filter order
+    required_filters = [
+        "Order Date", "Region", "User",
+        "L4Position User", "L3Position User", "L2Position User",
+        "Reporting Manager", "Primary Category"
+    ]
 
-filter_selections = {}
-available_cols = {c.lower().replace(" ", "").replace("_",""): c for c in df.columns}
+    filter_selections = {}
 
-# Date range
-if "orderdate" in available_cols:
-    date_col = available_cols["orderdate"]
-    min_date, max_date = df[date_col].dropna().min(), df[date_col].dropna().max()
-    if pd.notna(min_date) and pd.notna(max_date):
-        start, end = st.date_input("Order Date Range", value=(min_date, max_date),
-                                   min_value=min_date, max_value=max_date)
-        filter_selections[date_col] = (start, end)
+    # ---- Date Filters ----
+    min_date, max_date = df["Order Date"].min(), df["Order Date"].max()
 
-# Other filters
-for f in required_filters:
-    key = f.lower().replace(" ", "").replace("_","")
-    if key == "orderdate": continue
-    if key in available_cols:
-        col = available_cols[key]
-        vals = df[col].dropna().unique().tolist()
-        if vals:
-            sel = st.multiselect(f, sorted(vals), key=f"f_{f}")
-            filter_selections[col] = sel
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        date_range = st.date_input("Order Date Range", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+    with col2:
+        single_date = st.date_input("Single Date", value=max_date, min_value=min_date, max_value=max_date)
+    with col3:
+        date_group = st.selectbox("Date Group", ["All", "Last 7 Days", "Last 15 Days"])
 
-# Apply filters
-df_filtered = df.copy()
-for col, sel in filter_selections.items():
-    if isinstance(sel, tuple):
-        start, end = sel
-        df_filtered = df_filtered[(df_filtered[col] >= start) & (df_filtered[col] <= end)]
-    elif sel:
-        df_filtered = df_filtered[df_filtered[col].isin(sel)]
+    # Apply date filters
+    df_filtered = df.copy()
+    if isinstance(date_range, tuple):
+        df_filtered = df_filtered[(df_filtered["Order Date"] >= date_range[0]) & (df_filtered["Order Date"] <= date_range[1])]
+    if single_date:
+        df_filtered = df_filtered[df_filtered["Order Date"] == single_date]
+    if date_group == "Last 7 Days":
+        df_filtered = df_filtered[df_filtered["Order Date"] >= date.today() - timedelta(days=7)]
+    elif date_group == "Last 15 Days":
+        df_filtered = df_filtered[df_filtered["Order Date"] >= date.today() - timedelta(days=15)]
 
-# ---------------------
-# Final Columns
-# ---------------------
-final_columns = [
-    "Order Date","Region","Territory","L4Position User","L3Position User","L2Position User",
-    "Reporting Manager","Primary Category","Distributor","Beat","Outlet Name","Address","Market","Product","User",
-    "Tc","Pc","Ovc","First Call","Last Call","Total Retail Time(Hh:Mm)",
-    "Ghee","Dw Primary Packs","Dw Consu","Dw Bulk","36 No","Smp","Gjm","Cream","Uht Milk","Flavored Milk"
-]
-final_columns = [c for c in final_columns if c in df_filtered.columns]
-final_df = df_filtered[final_columns].reset_index(drop=True)
+    # ---- Other Filters (Smart Filtering) ----
+    filter_cols = [f for f in required_filters if f != "Order Date"]
 
-# ---------------------
-# KPIs & Export
-# ---------------------
-st.markdown("### KPIs")
-k1,k2,k3,k4 = st.columns(4)
-k1.metric("Rows", len(final_df))
-k2.metric("Unique Users", final_df["User"].nunique() if "User" in final_df.columns else 0)
-k3.metric("Outlets", final_df["Outlet Name"].nunique() if "Outlet Name" in final_df.columns else 0)
-k4.metric("Territories", final_df["Territory"].nunique() if "Territory" in final_df.columns else 0)
+    for f in filter_cols:
+        if f in df_filtered.columns:
+            vals = sorted(df_filtered[f].dropna().unique().tolist())
+            vals = ["All"] + vals
+            sel = st.multiselect(f, vals, default="All")
+            if "All" not in sel:
+                df_filtered = df_filtered[df_filtered[f].isin(sel)]
 
-# ---------------------
-# Styled Table
-# ---------------------
-st.markdown("### Results Table (Top 200 Rows)")
+    # ---- Column Selection ----
+    cols_available = df_filtered.columns.tolist()
+    cols_available = ["All"] + cols_available
+    selected_cols = st.multiselect("Columns Wants in Table", cols_available, default="All")
 
-# Apply CSS styling
-st.markdown(
-    """
-    <style>
-    .stDataFrame thead tr th {
-        font-weight: bold !important;
-    }
-    .stDataFrame tbody td {
-        font-weight: bold !important;
-        text-align: center !important;
-        border: 1.5px solid black !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+    if "All" in selected_cols or not selected_cols:
+        final_df = df_filtered
+    else:
+        final_df = df_filtered[selected_cols]
 
-st.dataframe(final_df.head(200), width="stretch")
+    st.markdown("### Results Table (Top 200 Rows)")
+    st.dataframe(final_df.head(200), width="stretch")
+
+    # Export
+    def to_csv_bytes(df_obj): return df_obj.to_csv(index=False).encode("utf-8")
+    def to_excel_bytes(df_obj):
+        out = BytesIO()
+        with pd.ExcelWriter(out, engine="openpyxl") as writer:
+            df_obj.to_excel(writer, index=False)
+        return out.getvalue()
+
+    st.download_button("Download CSV", to_csv_bytes(final_df), "filtered_export.csv", "text/csv")
+    st.download_button("Download Excel", to_excel_bytes(final_df),
+                       "filtered_export.xlsx",
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ---------------------
-# Export
+# OUTLET WISE REPORT TAB
 # ---------------------
-def to_csv_bytes(df_obj): return df_obj.to_csv(index=False).encode("utf-8")
-def to_excel_bytes(df_obj):
-    out = BytesIO()
-    with pd.ExcelWriter(out, engine="openpyxl") as writer:
-        df_obj.to_excel(writer, index=False)
-    return out.getvalue()
-
-st.download_button("Download CSV", to_csv_bytes(final_df), "filtered_export.csv", "text/csv")
-st.download_button("Download Excel", to_excel_bytes(final_df),
-                   "filtered_export.xlsx",
-                   "application/vnd.openxmlformats-officedocument-spreadsheetml.sheet")
+with tab2:
+    st.subheader("🏪 Outlet Wise Report")
+    st.info("This section is a placeholder. You can plug in outlet-wise logic here.")
