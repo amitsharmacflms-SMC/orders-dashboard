@@ -178,8 +178,9 @@ if {"First Call", "Last Call"}.issubset(df.columns):
     df["Total Retail Time(Hh:Mm)"] = diff_minutes.apply(lambda x: f"{x//60:02d}:{x%60:02d}")
     # ✅ Convert First Call / Last Call to HH:MM strings (fix pyarrow error)
     for col in ["First Call", "Last Call"]:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%H:%M")
+    if col in df.columns:
+        df[col] = pd.to_datetime(df[col], format="%H:%M", errors="coerce").dt.strftime("%H:%M")
+
 
 
 
