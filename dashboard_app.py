@@ -97,65 +97,78 @@ df = df.drop(columns=[c for c in remove_cols if c in df.columns], errors="ignore
 # ---------------------
 # DAILY SUMMARY TAB
 # ---------------------
+# ---------------------
+# DAILY SUMMARY TAB
+# ---------------------
 with tab1:
     st.subheader("📊 Daily Summary Report")
 
-    # Filter order
-    required_filters = [
-        "Order Date", "Region", "User",
-        "L4Position User", "L3Position User", "L2Position User",
-        "Reporting Manager", "Primary Category"
-    ]
-
-    filter_selections = {}
-
-    # ---- Date Filters ----
+    # ---- Date Filter (combined) ----
     min_date, max_date = df["Order Date"].min(), df["Order Date"].max()
 
-    col1, col2, col3 = st.columns([2, 1, 1])
+    col1, col2 = st.columns([2, 1])
     with col1:
-        date_range = st.date_input("Order Date Range", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+        date_mode = st.radio("Date Selection Mode", ["None", "Single Date", "Date Range"], horizontal=True)
     with col2:
-        single_date = st.date_input("Single Date", value=max_date, min_value=min_date, max_value=max_date)
-    with col3:
         date_group = st.selectbox("Date Group", ["All", "Last 7 Days", "Last 15 Days"])
 
-    # Apply date filters
     df_filtered = df.copy()
-    if isinstance(date_range, tuple):
-        df_filtered = df_filtered[(df_filtered["Order Date"] >= date_range[0]) & (df_filtered["Order Date"] <= date_range[1])]
-    if single_date:
+
+    if date_mode == "Single Date":
+        single_date = st.date_input("Pick a Date", value=max_date, min_value=min_date, max_value=max_date)
         df_filtered = df_filtered[df_filtered["Order Date"] == single_date]
+
+    elif date_mode == "Date Range":
+        date_range = st.date_input("Pick a Date Range", value=(min_date, max_date),
+                                   min_value=min_date, max_value=max_date)
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            df_filtered = df_filtered[(df_filtered["Order Date"] >= date_range[0]) & (df_filtered["Order Date"] <= date_range[1])]
+
+    # ---- Date Group still applies after above ----
     if date_group == "Last 7 Days":
         df_filtered = df_filtered[df_filtered["Order Date"] >= date.today() - timedelta(days=7)]
     elif date_group == "Last 15 Days":
         df_filtered = df_filtered[df_filtered["Order Date"] >= date.today() - timedelta(days=15)]
 
     # ---- Other Filters (Smart Filtering) ----
-    filter_cols = [f for f in required_filters if f != "Order Date"]
+    required_filters = [
+        "Region","User","L4Position User","L3Position User","L2Position User",
+        "Reporting Manager","Primary Category"
+    ]
 
-    for f in filter_cols:
+    for f in required_filters:
         if f in df_filtered.columns:
             vals = sorted(df_filtered[f].dropna().unique().tolist())
             vals = ["All"] + vals
-            sel = st.multiselect(f, vals, default="All")
+            sel = st.multiselect(f, vals, default="All", key=f"f_{f}")
             if "All" not in sel:
                 df_filtered = df_filtered[df_filtered[f].isin(sel)]
 
     # ---- Column Selection ----
-    cols_available = df_filtered.columns.tolist()
-    cols_available = ["All"] + cols_available
+    allowed_cols = [
+        # Summary
+        "Order Date","L4Position User","L3Position User","L2Position User","Region",
+        "Reporting Manager","User","Selected Jw User","Type","Reason",
+        "Tc","Pc","Ovc","First Call","Last Call","Total Retail Time(Hh:Mm)",
+        "Ghee","Dw Primary Packs","Dw Consu","Dw Bulk","36 No","Smp","Gjm",
+        "Cream","Uht Milk","Flavored Milk",
+        # Secondary
+        "Distributor","Territory","Beat"
+    ]
+
+    cols_available = ["All"] + [c for c in allowed_cols if c in df_filtered.columns]
     selected_cols = st.multiselect("Columns Wants in Table", cols_available, default="All")
 
     if "All" in selected_cols or not selected_cols:
-        final_df = df_filtered
+        final_df = df_filtered[allowed_cols]
     else:
         final_df = df_filtered[selected_cols]
 
+    # ---- Results ----
     st.markdown("### Results Table (Top 200 Rows)")
     st.dataframe(final_df.head(200), width="stretch")
 
-    # Export
+    # ---- Export ----
     def to_csv_bytes(df_obj): return df_obj.to_csv(index=False).encode("utf-8")
     def to_excel_bytes(df_obj):
         out = BytesIO()
@@ -166,7 +179,8 @@ with tab1:
     st.download_button("Download CSV", to_csv_bytes(final_df), "filtered_export.csv", "text/csv")
     st.download_button("Download Excel", to_excel_bytes(final_df),
                        "filtered_export.xlsx",
-                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                       "application/vnd.openxmlformats-officedocument-spreadsheetml.sheet")
+
 
 # ---------------------
 # OUTLET WISE REPORT TAB
