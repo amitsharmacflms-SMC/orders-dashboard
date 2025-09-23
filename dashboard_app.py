@@ -1,7 +1,5 @@
 import streamlit as st
 import pandas as pd
-import re
-from datetime import datetime, date
 from io import BytesIO
 
 st.set_page_config(page_title="Orders Dashboard", layout="wide")
@@ -20,82 +18,46 @@ def normalize_columns(df):
     return df
 
 def robust_parse_date_col(series):
-    """Elementwise robust parser for dates."""
-    fmt_list = [
-        "%d-%m-%Y","%Y-%m-%d","%d-%b-%Y","%d %b %Y","%m-%d-%Y",
-        "%d-%m-%y","%d-%m-%Y %H:%M:%S","%d-%b-%y","%d/%m/%Y","%Y/%m/%d"
-    ]
+    """Safe robust date parsing (formats + Excel serials + fallback)."""
+    s = series.copy()
+    s_str = s.astype(str).str.strip()
 
-    out = []
-    for val in series:
-        parsed_date = None
-        if pd.isna(val):
-            out.append(pd.NaT)
-            continue
+    # 1) Try explicit formats
+    parsed = pd.to_datetime(s_str, format="%Y-%m-%d", errors="coerce")
+    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d", "%d-%b-%Y", "%d %b %Y", "%m/%d/%Y", "%d.%m.%Y"):
+        parsed = parsed.fillna(pd.to_datetime(s_str, format=fmt, errors="coerce"))
 
-        s = str(val).strip()
-        s = re.sub(r'[–—]', '-', s)
-        s = s.replace('/', '-').replace('.', '-')
-        s = re.sub(r'\s+', ' ', s)
+    # 2) Excel-style serial numbers
+    s_num = pd.to_numeric(series, errors="coerce")
+    mask = s_num.notna()
+    if mask.any():
+        try:
+            nums = s_num[mask].astype("float64").values
+            converted = pd.to_datetime(nums, unit="d", origin="1899-12-30", errors="coerce")
+            converted_series = pd.Series(converted, index=s_num[mask].index)
+            parsed = parsed.fillna(converted_series)
+        except Exception:
+            converted_series = s_num[mask].apply(
+                lambda x: pd.to_datetime(float(x), unit="d", origin="1899-12-30", errors="coerce")
+            )
+            parsed = parsed.fillna(converted_series)
 
-        # explicit formats
-        for fmt in fmt_list:
-            try:
-                dt = datetime.strptime(s, fmt)
-                parsed_date = dt.date()
-                break
-            except Exception:
-                pass
-
-        # regex fallback
-        if parsed_date is None:
-            m = re.search(r'(\d{1,4})\D+(\d{1,2})\D+(\d{1,4})', s)
-            if m:
-                a,b,c = m.group(1), m.group(2), m.group(3)
-                try:
-                    if len(a) == 4:
-                        y, mth, d = int(a), int(b), int(c)
-                    elif len(c) == 4:
-                        d, mth, y = int(a), int(b), int(c)
-                    else:
-                        d, mth, y = int(a), int(b), int(c)
-                        if y < 100: y += 2000
-                    parsed_date = date(y, mth, d)
-                except Exception:
-                    parsed_date = None
-
-        # Excel serial fallback
-        if parsed_date is None:
-            try:
-                num = float(s)
-                if 1 < num < 1000000:
-                    conv = pd.to_datetime(num, unit="d", origin="1899-12-30", errors="coerce")
-                    if not pd.isna(conv):
-                        parsed_date = conv.date()
-            except Exception:
-                pass
-
-        # pandas fallback
-        if parsed_date is None:
-            try:
-                conv2 = pd.to_datetime(s, errors="coerce")
-                if not pd.isna(conv2):
-                    parsed_date = conv2.date()
-            except Exception:
-                parsed_date = None
-
-        out.append(parsed_date if parsed_date is not None else pd.NaT)
-
-    return pd.Series(out, index=series.index)
+    # 3) Final fallback
+    parsed = parsed.fillna(pd.to_datetime(s_str, errors="coerce"))
+    return parsed.dt.date
 
 def aggregate_secondary(df_secondary, join_keys):
+    """Aggregate secondary to unique join_keys rows."""
     df = df_secondary.copy()
     nums = df.select_dtypes(include=["number"]).columns.tolist()
     objs = [c for c in df.select_dtypes(include=["object", "category"]).columns.tolist() if c not in join_keys]
+
     agg_dict = {c: "sum" for c in nums}
     for c in objs:
         agg_dict[c] = "first"
-    return df.groupby(join_keys, dropna=False).agg(agg_dict).reset_index()
+
+    grouped = df.groupby(join_keys, dropna=False).agg(agg_dict).reset_index()
+    return grouped
 
 def unify_columns_and_drop(df_local, base):
     sum_col, sec_col = f"{base}_Sum", f"{base}_Sec"
@@ -111,6 +73,7 @@ def unify_columns_and_drop(df_local, base):
     return df_local
 
 def parse_time_series(series):
+    """Parse HH:MM times with fallback."""
     parsed = pd.to_datetime(series, format="%H:%M", errors="coerce")
     if parsed.isna().all():
         parsed = pd.to_datetime(series, errors="coerce")
@@ -126,42 +89,89 @@ def load_data():
     return df_summary, df_secondary
 
 df_summary_raw, df_secondary_raw = load_data()
+
+# Normalize headers
 df_summary = normalize_columns(df_summary_raw)
 df_secondary = normalize_columns(df_secondary_raw)
 
+# Rename Date -> Order Date
 if "Date" in df_summary.columns and "Order Date" not in df_summary.columns:
     df_summary = df_summary.rename(columns={"Date": "Order Date"})
 if "Date" in df_secondary.columns and "Order Date" not in df_secondary.columns:
     df_secondary = df_secondary.rename(columns={"Date": "Order Date"})
 
+# Parse dates
 if "Order Date" in df_summary.columns:
     df_summary["Order Date"] = robust_parse_date_col(df_summary["Order Date"])
 if "Order Date" in df_secondary.columns:
     df_secondary["Order Date"] = robust_parse_date_col(df_secondary["Order Date"])
 
+# Normalize User
 if "User" in df_summary.columns:
     df_summary["User"] = df_summary["User"].astype(str).str.strip().str.upper()
 if "User" in df_secondary.columns:
     df_secondary["User"] = df_secondary["User"].astype(str).str.strip().str.upper()
 
 # ---------------------
-# Merge
+# Aggregate Secondary
 # ---------------------
 if "Order Date" in df_secondary.columns:
     join_keys = ["User", "Order Date"]
+    st.info("Secondary has 'Order Date'. Aggregating by (User, Order Date).")
     df_secondary_agg = aggregate_secondary(df_secondary, join_keys)
 else:
     join_keys = ["User"]
+    st.warning("Secondary has NO 'Order Date'. Aggregating by User only.")
     df_secondary_agg = aggregate_secondary(df_secondary, join_keys)
 
+# ---------------------
+# Diagnostic Merge
+# ---------------------
+st.markdown("### 🔍 Secondary Merge Diagnostics (fixed)")
+
+s = df_summary.copy()
+t = df_secondary_agg.copy()
+
+s["__user__"] = s["User"].astype(str).str.strip().str.upper() if "User" in s.columns else None
+t["__user__"] = t["User"].astype(str).str.strip().str.upper() if "User" in t.columns else None
+
+s["__date__"] = pd.to_datetime(s["Order Date"], errors="coerce").dt.date if "Order Date" in s.columns else pd.NaT
+t["__date__"] = pd.to_datetime(t["Order Date"], errors="coerce").dt.date if "Order Date" in t.columns else pd.NaT
+
+st.write("Unique users in Summary (sample 20):", sorted(s["__user__"].dropna().unique())[:20])
+st.write("Unique users in Secondary (sample 20):", sorted(t["__user__"].dropna().unique())[:20])
+
+if join_keys:
+    tmp = s.merge(t, on=join_keys, how="left", indicator=True)
+
+    if "__user__" not in tmp.columns:
+        if "User" in tmp.columns:
+            tmp["__user__"] = tmp["User"].astype(str).str.strip().str.upper()
+
+    merge_counts = tmp["_merge"].value_counts().to_dict() if "_merge" in tmp.columns else {}
+    st.write("Merge indicator counts:", merge_counts)
+
+    if "_merge" in tmp.columns and "left_only" in tmp["_merge"].unique():
+        st.write("Rows with no Secondary match (left_only) sample:")
+        st.write(tmp[tmp["_merge"] == "left_only"][["User", "Order Date", "__user__"]].head(20))
+else:
+    st.warning("No merge keys available.")
+
+# ---------------------
+# Perform Merge
+# ---------------------
 df = pd.merge(df_summary, df_secondary_agg, on=join_keys, how="left", suffixes=("_Sum", "_Sec"))
 
+# ---------------------
+# Unify & Clean
+# ---------------------
 for col_base in [
     "Region", "Territory", "Reporting Manager", "Distributor",
     "L4Position User", "L3Position User", "L2Position User", "Primary Category"
 ]:
     df = unify_columns_and_drop(df, col_base)
 
+# Ensure extra columns exist
 extra_cols = [
     "Tc","Pc","Ovc","First Call","Last Call","Total Retail Time(Hh:Mm)",
     "Ghee","Dw Primary Packs","Dw Consu","Dw Bulk","36 No","Smp","Gjm","Cream","Uht Milk","Flavored Milk"
@@ -170,21 +180,13 @@ for c in extra_cols:
     if c not in df.columns:
         df[c] = 0 if ("Call" not in c and "Time" not in c) else pd.NaT
 
+# Retail time
 if {"First Call", "Last Call"}.issubset(df.columns):
     first_parsed = parse_time_series(df["First Call"])
     last_parsed = parse_time_series(df["Last Call"])
     diff_minutes = (last_parsed - first_parsed).dt.total_seconds() / 60
     diff_minutes = pd.to_numeric(diff_minutes, errors="coerce").fillna(0).clip(lower=0).astype(int)
     df["Total Retail Time(Hh:Mm)"] = diff_minutes.apply(lambda x: f"{x//60:02d}:{x%60:02d}")
-
-    # ✅ Convert First Call / Last Call safely
-    for col in ["First Call", "Last Call"]:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], format="%H:%M", errors="coerce").dt.strftime("%H:%M")
-
-
-
-
 
 # ---------------------
 # Filters
@@ -199,16 +201,16 @@ required_filters = [
 filter_selections = {}
 available_cols = {c.lower().replace(" ", "").replace("_",""): c for c in df.columns}
 
-# ✅ FIX: Always use Summary date range, not merged df
+# Date range
 if "orderdate" in available_cols:
     date_col = available_cols["orderdate"]
-    min_date = df_summary["Order Date"].dropna().min()
-    max_date = df_summary["Order Date"].dropna().max()
+    min_date, max_date = df[date_col].dropna().min(), df[date_col].dropna().max()
     if pd.notna(min_date) and pd.notna(max_date):
         start, end = st.date_input("Order Date Range", value=(min_date, max_date),
                                    min_value=min_date, max_value=max_date)
         filter_selections[date_col] = (start, end)
 
+# Other filters
 for f in required_filters:
     key = f.lower().replace(" ", "").replace("_","")
     if key == "orderdate": continue
@@ -219,6 +221,7 @@ for f in required_filters:
             sel = st.multiselect(f, sorted(vals), key=f"f_{f}")
             filter_selections[col] = sel
 
+# Apply filters
 df_filtered = df.copy()
 for col, sel in filter_selections.items():
     if isinstance(sel, tuple):
@@ -249,28 +252,7 @@ k2.metric("Unique Users", final_df["User"].nunique() if "User" in final_df.colum
 k3.metric("Outlets", final_df["Outlet Name"].nunique() if "Outlet Name" in final_df.columns else 0)
 k4.metric("Territories", final_df["Territory"].nunique() if "Territory" in final_df.columns else 0)
 
-# ---------------------
-# Styled Table
-# ---------------------
 st.markdown("### Results Table (Top 200 Rows)")
-
-st.markdown(
-    """
-    <style>
-    .stDataFrame table, .stDataFrame th, .stDataFrame td {
-        border: 2px solid black !important;
-    }
-    .stDataFrame th, .stDataFrame td {
-        font-weight: bold !important;
-    }
-    .stDataFrame td {
-        text-align: center !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
 st.dataframe(final_df.head(200), width="stretch")
 
 def to_csv_bytes(df_obj): return df_obj.to_csv(index=False).encode("utf-8")
@@ -283,4 +265,4 @@ def to_excel_bytes(df_obj):
 st.download_button("Download CSV", to_csv_bytes(final_df), "filtered_export.csv", "text/csv")
 st.download_button("Download Excel", to_excel_bytes(final_df),
                    "filtered_export.xlsx",
-                   "application/vnd.openxmlformats-officedocument-spreadsheetml.sheet")
+                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
