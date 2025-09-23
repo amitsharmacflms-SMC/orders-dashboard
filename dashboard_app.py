@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 
-st.set_page_config(page_title="Daily Sales Summary", layout="wide")
+st.set_page_config(page_title="Orders Dashboard", layout="wide")
 TABLE_WIDTH_MODE = "stretch"
 
 # ---------------------
@@ -18,14 +18,19 @@ def normalize_columns(df):
     return df
 
 def robust_parse_date_col(series):
-    """Safe robust date parsing (formats + Excel serials + fallback)."""
+    """Safe robust date parsing (handles 01-09-2025 style, Excel serials, and weird dashes)."""
     s = series.copy()
+    # Convert to string, strip spaces, normalize separators
     s_str = s.astype(str).str.strip()
+    s_str = s_str.str.replace("[–—]", "-", regex=True)  # replace en-dash/em-dash with normal dash
+    s_str = s_str.str.replace("/", "-", regex=True)     # unify slashes to dash
 
-    parsed = pd.to_datetime(s_str, format="%Y-%m-%d", errors="coerce")
-    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d", "%d-%b-%Y", "%d %b %Y", "%m/%d/%Y", "%d.%m.%Y"):
+    # 1) Try explicit formats
+    parsed = pd.to_datetime(s_str, format="%d-%m-%Y", errors="coerce")
+    for fmt in ("%Y-%m-%d", "%d-%b-%Y", "%d %b %Y", "%m-%d-%Y", "%d-%m-%y", "%d-%m-%Y %H:%M:%S"):
         parsed = parsed.fillna(pd.to_datetime(s_str, format=fmt, errors="coerce"))
 
+    # 2) Excel-style serial numbers
     s_num = pd.to_numeric(series, errors="coerce")
     mask = s_num.notna()
     if mask.any():
@@ -40,6 +45,7 @@ def robust_parse_date_col(series):
             )
             parsed = parsed.fillna(converted_series)
 
+    # 3) Final fallback
     parsed = parsed.fillna(pd.to_datetime(s_str, errors="coerce"))
     return parsed.dt.date
 
@@ -134,6 +140,16 @@ if {"First Call", "Last Call"}.issubset(df.columns):
     df["Total Retail Time(Hh:Mm)"] = diff_minutes.apply(lambda x: f"{x//60:02d}:{x%60:02d}")
 
 # ---------------------
+# Quick Date Check
+# ---------------------
+with st.expander("🔎 Check for 01-Sep-2025 and 22-Sep-2025 in Summary"):
+    for d in ["2025-09-01", "2025-09-22"]:
+        d_parsed = pd.to_datetime(d).date()
+        rows = df_summary[df_summary["Order Date"] == d_parsed]
+        st.write(f"{d} → {len(rows)} rows")
+        st.write(rows.head(10))
+
+# ---------------------
 # Filters
 # ---------------------
 st.markdown("### Filters")
@@ -199,7 +215,6 @@ k4.metric("Territories", final_df["Territory"].nunique() if "Territory" in final
 # ---------------------
 st.markdown("### Results Table (Top 200 Rows)")
 
-# Inject CSS for bold font, center numeric, thicker gridlines
 st.markdown(
     """
     <style>
